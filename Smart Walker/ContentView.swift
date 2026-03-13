@@ -15,7 +15,7 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            Text("Smart Walker Live Telemetry")
+            Text("Smart Walker")
                 .font(.largeTitle)
                 .fontWeight(.bold)
                 .multilineTextAlignment(.center)
@@ -51,11 +51,6 @@ struct ContentView: View {
                 }
             }
             .padding(.top, 8)
-
-            Text("Values refresh automatically.")
-                .font(.footnote)
-                .foregroundColor(.secondary)
-
             Spacer()
         }
         .padding()
