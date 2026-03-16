@@ -84,15 +84,13 @@ struct ContentView: View {
     
     private var bleIconName: String {
         if !bluetooth.isBluetoothOn {
-            return "bluetooth.slash"
+            return "xmark.circle.fill"
         }
-        return bluetooth.connectedCount == 0
-            ? "antenna.radiowaves.left.and.right.slash"
-            : "antenna.radiowaves.left.and.right"
+        return "antenna.radiowaves.left.and.right"
     }
     
     private var bleIconColor: Color {
-        if !bluetooth.isBluetoothOn { return .gray }
+        if !bluetooth.isBluetoothOn { return .red }
         switch bluetooth.connectedCount {
         case 3: return .green
         case 1, 2: return .yellow

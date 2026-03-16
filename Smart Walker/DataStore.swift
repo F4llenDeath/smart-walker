@@ -27,8 +27,7 @@ class DataStore: ObservableObject {
     
     // Initialization
     
-    override init() {
-        super.init()
+    init() {
         load()
         
         // Ensure "Unassigned" patient always exists
