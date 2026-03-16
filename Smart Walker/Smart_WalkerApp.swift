@@ -9,9 +9,14 @@ import SwiftUI
 
 @main
 struct Smart_WalkerApp: App {
+    @StateObject private var bluetooth = BluetoothManager()
+    @StateObject private var dataStore = DataStore()
+    
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(bluetooth)
+                .environmentObject(dataStore)
         }
     }
 }
