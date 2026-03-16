@@ -21,6 +21,7 @@ bool               deviceConnected = false;
 bool               oldDeviceConnected = false;
 unsigned long      lastSendTime = 0;
 
+//connection status
 class ServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) override {
     deviceConnected = true;
