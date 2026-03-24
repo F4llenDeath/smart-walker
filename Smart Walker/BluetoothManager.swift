@@ -1,8 +1,8 @@
 import Foundation
 import CoreBluetooth
 
-private let serviceUUID        = CBUUID(string: "12345678-1234-1234-1234-123456789ABC")
-private let characteristicUUID = CBUUID(string: "12345678-1234-1234-1234-123456789ABD")
+private let serviceUUID        = CBUUID(string: "A7E8F0B1-3C54-4D92-9F3E-0A1B2C3D4E5F")
+private let characteristicUUID = CBUUID(string: "B8F9E1C2-4D65-5EA3-A04F-1B2C3D4E5F60")
 
 private let leftFootName  = "SW-LeftFoot"
 private let rightFootName = "SW-RightFoot"
