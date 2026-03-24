@@ -50,10 +50,7 @@ Smart Walker/
     ├── TrialDetailView.swift   # Trial summary + CSV export
     ├── BluetoothManager.swift  # CoreBluetooth multi-connection manager
     ├── DataStore.swift         # Patient/trial persistence (JSON)
-    ├── Info.plist              # Bluetooth permission
     └── Models/
         ├── Patient.swift       # Patient data model
         └── Trial.swift         # Trial + DataPoint models, CSV export
-
-
 ```
