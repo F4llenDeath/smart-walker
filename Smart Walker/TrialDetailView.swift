@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Charts
 
 struct TrialDetailView: View {
     @EnvironmentObject var dataStore: DataStore
@@ -30,8 +31,66 @@ struct TrialDetailView: View {
         return end.formatted(date: .omitted, time: .standard)
     }
     
+    /// Data points with elapsed seconds for chart X-axis
+    private var chartData: [(elapsed: Double, speed: Double, weightL: Double, weightR: Double)] {
+        let start = trial.startDate
+        return trial.dataPoints.map { point in
+            let elapsed = point.timestamp.timeIntervalSince(start)
+            return (elapsed: elapsed, speed: point.speedFtS, weightL: point.weightLeft, weightR: point.weightRight)
+        }
+    }
+    
     var body: some View {
         List {
+            
+            // Speed Chart
+            if trial.dataPoints.count >= 2 {
+                Section("Speed") {
+                    Chart {
+                        ForEach(Array(chartData.enumerated()), id: \.offset) { _, point in
+                            LineMark(
+                                x: .value("Time (s)", point.elapsed),
+                                y: .value("Speed (ft/s)", point.speed)
+                            )
+                            .foregroundStyle(.blue)
+                            .interpolationMethod(.catmullRom)
+                        }
+                    }
+                    .chartXAxisLabel("Time (s)")
+                    .chartYAxisLabel("ft/s")
+                    .frame(height: 200)
+                }
+                
+                // Weight Chart
+                Section("Weight Distribution") {
+                    Chart {
+                        ForEach(Array(chartData.enumerated()), id: \.offset) { _, point in
+                            LineMark(
+                                x: .value("Time (s)", point.elapsed),
+                                y: .value("Weight", point.weightL),
+                                series: .value("Foot", "Left")
+                            )
+                            .foregroundStyle(.blue)
+                            .interpolationMethod(.catmullRom)
+                            
+                            LineMark(
+                                x: .value("Time (s)", point.elapsed),
+                                y: .value("Weight", point.weightR),
+                                series: .value("Foot", "Right")
+                            )
+                            .foregroundStyle(.orange)
+                            .interpolationMethod(.catmullRom)
+                        }
+                    }
+                    .chartXAxisLabel("Time (s)")
+                    .chartYAxisLabel("lbs")
+                    .chartForegroundStyleScale([
+                        "Left": Color.blue,
+                        "Right": Color.orange
+                    ])
+                    .frame(height: 200)
+                }
+            }
             
             Section("Time") {
                 detailRow("Date", value: dateFormatted)
