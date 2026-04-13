@@ -8,7 +8,12 @@
 import SwiftUI
 
 struct TrialDetailView: View {
+    @EnvironmentObject var dataStore: DataStore
+    @Environment(\.dismiss) private var dismiss
+    
     let trial: Trial
+    
+    @State private var showDeleteConfirm = false
     
     /// Date formatter
     private var dateFormatted: String {
@@ -66,6 +71,28 @@ struct TrialDetailView: View {
         }
         .navigationTitle("Trial Detail")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(role: .destructive) {
+                    showDeleteConfirm = true
+                } label: {
+                    Image(systemName: "trash")
+                        .foregroundColor(.red)
+                }
+            }
+        }
+        .alert("Delete Trial?", isPresented: $showDeleteConfirm) {
+            Button("Delete", role: .destructive) {
+                dataStore.deleteTrial(
+                    patientID: dataStore.selectedPatientID,
+                    trialID: trial.id
+                )
+                dismiss()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This trial and all its data will be permanently deleted.")
+        }
     }
     
     // Helper
@@ -91,5 +118,6 @@ struct TrialDetailView: View {
                 DataPoint(timestamp: Date(), weightLeft: 79.0, weightRight: 73.5, distanceFt: 15.3, speedFtS: 3.1),
             ]
         ))
+        .environmentObject(DataStore())
     }
 }
