@@ -17,6 +17,9 @@ struct ContentView: View {
     
     // Recording timer
     @State private var recordingTimer: Timer? = nil
+    @State private var trialStartTime: Date? = nil
+    @State private var displayTimer: Timer? = nil
+    @State private var elapsedDisplay: TimeInterval = 0
     
     var body: some View {
         NavigationStack {
@@ -182,7 +185,19 @@ struct ContentView: View {
     // trial toggle button
     
     private var trialToggleButton: some View {
-        Button(action: toggleTrial) {
+        VStack(spacing: 8) {
+            if dataStore.isRecording {
+                let minutes = Int(elapsedDisplay) / 60
+                let seconds = Int(elapsedDisplay) % 60
+                let centiseconds = Int((elapsedDisplay.truncatingRemainder(dividingBy: 1)) * 100)
+                Text(String(format: "%02d:%02d.%02d", minutes, seconds, centiseconds))
+                    .font(.system(size: 36, weight: .light, design: .monospaced))
+                    .foregroundColor(.primary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
+            }
+            
+            Button(action: toggleTrial) {
             HStack {
                 Image(systemName: dataStore.isRecording ? "stop.fill" : "play.fill")
                 Text(dataStore.isRecording ? "Stop Trial" : "Start Trial")
@@ -195,6 +210,7 @@ struct ContentView: View {
             .background(dataStore.isRecording ? Color.red : Color.green)
             .cornerRadius(12)
         }
+        }
     }
     
     private func toggleTrial() {
@@ -202,10 +218,22 @@ struct ContentView: View {
             // Stop recording
             recordingTimer?.invalidate()
             recordingTimer = nil
+            trialStartTime = nil
+            displayTimer?.invalidate()
+            displayTimer = nil
+            elapsedDisplay = 0
             dataStore.stopTrial()
         } else {
             // Start recording
+            let now = Date()
+            trialStartTime = now
+            elapsedDisplay = 0
             dataStore.startTrial()
+            displayTimer = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { _ in
+                if let start = trialStartTime {
+                    elapsedDisplay = Date().timeIntervalSince(start)
+                }
+            }
             recordingTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { _ in
                 dataStore.addDataPoint(
                     weightLeft: bluetooth.weightLeft,
