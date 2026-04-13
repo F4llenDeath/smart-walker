@@ -24,6 +24,10 @@ class BluetoothManager: NSObject, ObservableObject {
     @Published var isBluetoothOn: Bool = false
     @Published var isScanning: Bool = false
     
+    // Simulation mode for testing without hardware
+    @Published var isSimulating: Bool = false
+    private var simTimer: Timer?
+    
     private var centralManager: CBCentralManager!
     
     private var leftFootPeripheral: CBPeripheral?
@@ -63,6 +67,48 @@ class BluetoothManager: NSObject, ObservableObject {
         (leftFootConnected ? 1 : 0) +
         (rightFootConnected ? 1 : 0) +
         (radarConnected ? 1 : 0)
+    }
+    
+    // MARK: - Simulation
+    
+    func toggleSimulation() {
+        if isSimulating {
+            stopSimulation()
+        } else {
+            startSimulation()
+        }
+    }
+    
+    private func startSimulation() {
+        isSimulating = true
+        leftFootConnected = true
+        rightFootConnected = true
+        radarConnected = true
+        distanceFt = 0.0
+        print("[SIM] Simulation started")
+        
+        simTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            // Realistic-ish random values
+            self.weightLeft  = Double.random(in: 60...90)
+            self.weightRight = Double.random(in: 60...90)
+            self.speedFtS    = Double.random(in: 0.5...4.0)
+            self.distanceFt += self.speedFtS * 0.2
+        }
+    }
+    
+    private func stopSimulation() {
+        simTimer?.invalidate()
+        simTimer = nil
+        isSimulating = false
+        leftFootConnected = false
+        rightFootConnected = false
+        radarConnected = false
+        weightLeft = 0.0
+        weightRight = 0.0
+        speedFtS = 0.0
+        distanceFt = 0.0
+        print("[SIM] Simulation stopped")
     }
 }
 

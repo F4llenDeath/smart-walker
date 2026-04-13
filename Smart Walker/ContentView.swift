@@ -119,6 +119,16 @@ struct ContentView: View {
                 }
                 .padding(.top, 4)
             }
+            
+            Divider()
+            
+            Toggle(isOn: Binding(
+                get: { bluetooth.isSimulating },
+                set: { _ in bluetooth.toggleSimulation() }
+            )) {
+                Label("Simulate Data", systemImage: "dice")
+                    .font(.subheadline)
+            }
         }
         .padding()
         .frame(minWidth: 200)
