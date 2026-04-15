@@ -1,11 +1,11 @@
 # Smart Walker
 
-A SwiftUI + Arduino project for the Spring 2026 UW Madison BME Design [Smart Walker](https://bmedesign.engr.wisc.edu/projects/s26/smart_walker) project. The iOS app connects to three BLE-enabled Arduinos mounted on a walker to display live weight, distance, and walking speed data. Trials can be recorded per patient and exported as CSV.
+A SwiftUI + embedded hardware project for the Spring 2026 UW Madison BME Design [Smart Walker](https://bmedesign.engr.wisc.edu/projects/s26/smart_walker) project. The iOS app connects via BLE to three sensor modules mounted on a walker — two ESP32 load cells (feet) and a Raspberry Pi + TI AWR1843 mmWave radar — to display live weight, distance, and walking speed data. Trials can be recorded per patient and exported as CSV.
 
 ## Features
 
 ### Live BLE Telemetry
-- Real-time weight (left/right foot), distance traveled, and walking speed from 3 Arduino sensors
+- Real-time weight (left/right foot), distance traveled, and walking speed from 3 BLE sensor modules
 - One-tap start/stop with data captured at 200ms intervals
 - Live elapsed timer (MM:SS.cc) during trial recording
 <p align="left">
@@ -33,7 +33,7 @@ Add patients via a popup picker; trials are organized per patient
 </p>
 
 ### Auto-Connect & Reconnect
-- BLE manager identifies Arduinos by name and reconnects automatically on disconnect
+- BLE manager identifies devices by name and reconnects automatically on disconnect
 - Intuitive BLE connection status indicator
 - Simulation mode — toggle simulated sensor data for testing without hardware
 <p align="left">
@@ -46,10 +46,11 @@ Add patients via a popup picker; trials are organized per patient
 
 ```
 Smart Walker/
-├── Arduino/
+├── controller/
 │   ├── swLeftFoot.ino          # ESP32 left foot load cell → BLE
 │   ├── swRightFoot.ino         # ESP32 right foot load cell → BLE
-│   └── swRadar.ino             # ESP32 Ti AWR1843Boost mmWave radar → BLE (data UART only, config hardcoded in sensor)
+│   ├── swRadar.py              # Raspberry Pi AWR1843 radar via USB → BLE
+│   └── AWR1843config.cfg       # TI mmWave radar configuration
 │
 └── Smart Walker/               # iOS app (SwiftUI)
     ├── Smart_WalkerApp.swift   # App entry point, injects dependencies

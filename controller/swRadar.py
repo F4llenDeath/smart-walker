@@ -1,8 +1,10 @@
 import serial
 import time
+import math
+import asyncio
+import threading
 import numpy as np
-import pyqtgraph as pg
-from pyqtgraph.Qt import QtGui
+from bless import BlessServer, BlessGATTCharacteristic, GATTCharacteristicProperties, GATTAttributePermissions
 
 # Change the configuration file name
 configFileName = 'AWR1843config.cfg'
@@ -24,12 +26,12 @@ def serialConfig(configFileName):
     # Open the serial ports for the configuration and the data ports
     
     # Raspberry pi
-    #CLIport = serial.Serial('/dev/ttyACM0', 115200)
-    #Dataport = serial.Serial('/dev/ttyACM1', 921600)
+    CLIport = serial.Serial('/dev/ttyACM0', 115200)
+    Dataport = serial.Serial('/dev/ttyACM1', 921600)
     
     # Windows
-    CLIport = serial.Serial('COM8', 115200)
-    Dataport = serial.Serial('COM9', 921600)
+    #CLIport = serial.Serial('COM8', 115200)
+    #Dataport = serial.Serial('COM9', 921600)
 
     # Read the configuration file and send it to the board
     config = [line.rstrip('\r\n') for line in open(configFileName)]
@@ -243,73 +245,143 @@ def readAndParseData18xx(Dataport, configParameters):
 
 # ------------------------------------------------------------------
 
-# Funtion to update the data and display in the plot
-def update():
-     
-    dataOk = 0
-    global detObj
-    x = []
-    y = []
-      
-    # Read and parse the received data
-    dataOk, frameNumber, detObj = readAndParseData18xx(Dataport, configParameters)
-    
-    if dataOk and len(detObj["x"])>0:
-        #print(detObj)
-        x = -detObj["x"]
-        y = detObj["y"]
-        
-        s.setData(x,y)
-        QtGui.QApplication.processEvents()
-    
-    return dataOk
+# BLE settings (must match iOS app BluetoothManager.swift and swRadar.ino)
+BLE_DEVICE_NAME     = "SW-Radar"
+BLE_SERVICE_UUID    = "A7E8F0B1-3C54-4D92-9F3E-0A1B2C3D4E5F"
+BLE_CHAR_UUID       = "B8F9E1C2-4D65-5EA3-A04F-1B2C3D4E5F60"
+BLE_NOTIFY_INTERVAL = 0.2   # seconds (200 ms, same as swRadar.ino)
+METERS_TO_FEET      = 3.28084
+
+# Distance & speed tracking (same logic as swRadar.ino)
+totalDistanceFt  = 0.0
+currentSpeedFtS  = 0.0
+lastFrameTime    = 0.0
+frameCount       = 0
+
+# ------------------------------------------------------------------
+
+# Function to process a parsed frame — find closest object, compute distance/speed
+# (replaces the original update() which plotted a scatter chart)
+def processFrame(detObj):
+    global totalDistanceFt, currentSpeedFtS, lastFrameTime, frameCount
+
+    frameCount += 1
+    now = time.time()
+
+    if detObj and detObj["numObj"] > 0 and len(detObj["x"]) > 0:
+        # Compute range for each detected point
+        ranges = np.sqrt(detObj["x"]**2 + detObj["y"]**2)
+
+        # Find closest object (ignore points closer than 1 cm)
+        valid = ranges > 0.01
+        if np.any(valid):
+            validRanges = np.where(valid, ranges, 9999.0)
+            closestIdx = np.argmin(validRanges)
+            closestVelocity = detObj["velocity"][closestIdx]
+
+            speedMs = abs(float(closestVelocity))
+            currentSpeedFtS = speedMs * METERS_TO_FEET
+
+            if lastFrameTime > 0:
+                dt = now - lastFrameTime
+                totalDistanceFt += currentSpeedFtS * dt
+        else:
+            currentSpeedFtS = 0.0
+    else:
+        currentSpeedFtS = 0.0
+
+    lastFrameTime = now
+
+# ------------------------------------------------------------------
+
+# Background thread: continuously reads and parses radar data
+def radarReaderThread(Dataport, configParameters, stopEvent):
+    while not stopEvent.is_set():
+        try:
+            dataOK, frameNumber, detObj = readAndParseData18xx(Dataport, configParameters)
+            if dataOK:
+                processFrame(detObj)
+        except Exception as e:
+            print(f"[Radar] Parse error: {e}")
+        time.sleep(0.03)  # ~30 Hz, same as original (0.05 was ~20 Hz)
+
+# ------------------------------------------------------------------
+
+# Async main — sets up BLE server and runs the radar reader
+async def main():
+    global totalDistanceFt, currentSpeedFtS
+
+    # 1. Configure radar serial ports and send config
+    print("[Radar] Configuring serial ports...")
+    CLIport, Dataport = serialConfig(configFileName)
+    configParameters = parseConfigFile(configFileName)
+    print(f"[Radar] Max range: {configParameters['maxRange']:.2f} m, "
+          f"Max velocity: {configParameters['maxVelocity']:.2f} m/s")
+
+    # 2. Start BLE GATT server (same UUIDs as swRadar.ino)
+    print(f"[BLE] Starting server as '{BLE_DEVICE_NAME}'...")
+    server = BlessServer(name=BLE_DEVICE_NAME)
+    await server.add_new_service(BLE_SERVICE_UUID)
+
+    char_flags = (
+        GATTCharacteristicProperties.read |
+        GATTCharacteristicProperties.notify
+    )
+    permissions = GATTAttributePermissions.readable
+    await server.add_new_characteristic(
+        BLE_SERVICE_UUID, BLE_CHAR_UUID,
+        char_flags, None, permissions,
+    )
+    await server.start()
+    print(f"[BLE] Advertising — Service: {BLE_SERVICE_UUID}")
+
+    # 3. Start radar reader in a background thread
+    stopEvent = threading.Event()
+    reader = threading.Thread(
+        target=radarReaderThread,
+        args=(Dataport, configParameters, stopEvent),
+        daemon=True,
+    )
+    reader.start()
+    print("[Radar] Reader thread started — listening for data...")
+
+    # 4. Main loop: update BLE characteristic and notify
+    lastPrint = time.time()
+    try:
+        while True:
+            # Build payload in same format as swRadar.ino: "distance,speed"
+            payload = f"{totalDistanceFt:.2f},{currentSpeedFtS:.2f}"
+            server.get_characteristic(BLE_CHAR_UUID).value = payload.encode("utf-8")
+            server.update_value(BLE_SERVICE_UUID, BLE_CHAR_UUID)
+
+            # Debug print every 1 second
+            now = time.time()
+            if now - lastPrint >= 1.0:
+                lastPrint = now
+                print(f"[Radar] Frames: {frameCount} | "
+                      f"Distance: {totalDistanceFt:.2f} ft | "
+                      f"Speed: {currentSpeedFtS:.2f} ft/s | "
+                      f"BLE: {payload}")
+
+            await asyncio.sleep(BLE_NOTIFY_INTERVAL)
+
+    except KeyboardInterrupt:
+        print("\n[Main] Shutting down...")
+
+    finally:
+        stopEvent.set()
+        reader.join(timeout=2)
+        await server.stop()
+        CLIport.write(('sensorStop\n').encode())
+        CLIport.close()
+        Dataport.close()
+        print("[Main] Clean shutdown complete")
 
 
 # -------------------------    MAIN   -----------------------------------------  
 
-# Configurate the serial port
-CLIport, Dataport = serialConfig(configFileName)
-
-# Get the configuration parameters from the configuration file
-configParameters = parseConfigFile(configFileName)
-
-# START QtAPPfor the plot
-app = QtGui.QApplication([])
-
-# Set the plot 
-pg.setConfigOption('background','w')
-win = pg.GraphicsLayoutWidget(title="2D scatter plot")
-p = win.addPlot()
-p.setXRange(-0.5,0.5)
-p.setYRange(0,1.5)
-p.setLabel('left',text = 'Y position (m)')
-p.setLabel('bottom', text= 'X position (m)')
-s = p.plot([],[],pen=None,symbol='o')
-win.show()
-   
-# Main loop 
-detObj = {}  
-frameData = {}    
-currentIndex = 0
-while True:
-    try:
-        # Update the data and check if the data is okay
-        dataOk = update()
-        
-        if dataOk:
-            # Store the current frame into frameData
-            frameData[currentIndex] = detObj
-            currentIndex += 1
-        
-        time.sleep(0.05) # Sampling frequency of 30 Hz
-        
-    # Stop the program and close everything if Ctrl + c is pressed
-    except KeyboardInterrupt:
-        CLIport.write(('sensorStop\n').encode())
-        CLIport.close()
-        Dataport.close()
-        win.close()
-        break
+if __name__ == "__main__":
+    asyncio.run(main())
         
     
 
