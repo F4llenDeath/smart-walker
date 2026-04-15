@@ -63,3 +63,6 @@ Smart Walker/
         ├── Patient.swift       # Patient data model
         └── Trial.swift         # Trial + DataPoint models, CSV export
 ```
+
+## Acknowledgments
+- Radar data parsing based on [AWR1843-Read-Data-Python](https://github.com/ibaiGorordo/AWR1843-Read-Data-Python-MMWAVE-SDK-3-) by Ibai Gorordo (MIT License)
