@@ -25,27 +25,78 @@ byteBufferLength = 0;
 # Function to configure the serial ports and send the data from
 # the configuration file to the radar
 def serialConfig(configFileName):
-    
+
     global CLIport
     global Dataport
-    # Open the serial ports for the configuration and the data ports
-    
+
     # Raspberry pi
-    CLIport = serial.Serial('/dev/ttyACM0', 115200)
-    Dataport = serial.Serial('/dev/ttyACM1', 921600)
-    
+    CLIport  = serial.Serial('/dev/ttyACM0', 115200, timeout=0.1)
+    Dataport = serial.Serial('/dev/ttyACM1', 921600, timeout=0.1)
+
     # Windows
     #CLIport = serial.Serial('COM8', 115200)
     #Dataport = serial.Serial('COM9', 921600)
 
-    # Read the configuration file and send it to the board
-    config = [line.rstrip('\r\n') for line in open(configFileName)]
-    for i in config:
-        CLIport.write((i+'\n').encode())
-        print(i)
-        time.sleep(0.01)
-        
+    # Halt any previous session, drain stale CLI/data, then reconfigure.
+    CLIport.write(b'sensorStop\n')
+    _drain_until_quiet(CLIport, quiet_ms=300, max_wait_s=2.0)
+    _drain_all(Dataport)
+
+    with open(configFileName) as f:
+        config = [line.rstrip('\r\n') for line in f]
+
+    for line in config:
+        stripped = line.strip()
+        if not stripped or stripped.startswith('%'):
+            print(line)
+            continue
+
+        CLIport.reset_input_buffer()
+        CLIport.write((line + '\n').encode())
+        print(line)
+
+        if not _wait_for_ack(CLIport, timeout_s=1.2):
+            print(f"[Radar] WARNING: no ack for '{line}'")
+
     return CLIport, Dataport
+
+# Discard bytes until `port` is silent for quiet_ms (cap: max_wait_s).
+def _drain_until_quiet(port, quiet_ms=300, max_wait_s=2.0):
+    quiet_s = quiet_ms / 1000.0
+    deadline = time.time() + max_wait_s
+    last_data = time.time()
+    while time.time() < deadline:
+        if port.in_waiting:
+            port.read(port.in_waiting)
+            last_data = time.time()
+        elif time.time() - last_data >= quiet_s:
+            return
+        time.sleep(0.02)
+
+# Discard anything currently buffered on `port`.
+def _drain_all(port):
+    try:
+        while port.in_waiting:
+            port.read(port.in_waiting)
+            time.sleep(0.01)
+    except Exception:
+        pass
+
+# Return True if 'Done' appears on `port` within timeout_s.
+def _wait_for_ack(port, timeout_s=1.2):
+    deadline = time.time() + timeout_s
+    buf = b''
+    while time.time() < deadline:
+        if port.in_waiting:
+            buf += port.read(port.in_waiting)
+            low = buf.lower()
+            if b'done' in low:
+                return True
+            if b'error' in low or b'ignored' in low:
+                return False
+        time.sleep(0.02)
+    return False
+
 
 # ------------------------------------------------------------------
 
