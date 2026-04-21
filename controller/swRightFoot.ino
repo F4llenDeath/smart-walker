@@ -12,7 +12,7 @@
 
 #define LOADCELL_DOUT_PIN  3
 #define LOADCELL_SCK_PIN   2
-#define CALIBRATION_FACTOR -18760.0
+#define CALIBRATION_FACTOR 18073.5
 HX711 scale;
 
 BLEServer*         pServer = nullptr;
