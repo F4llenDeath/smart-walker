@@ -54,9 +54,13 @@ struct Trial: Identifiable, Codable, Equatable {
         }
     }
     
+    /// Distance walked during the trial only (last - first data point).
     var totalDistance: Double {
-        dataPoints.last?.distanceFt ?? 0.0
+        guard let first = dataPoints.first?.distanceFt,
+              let last  = dataPoints.last?.distanceFt else { return 0.0 }
+        return max(0.0, last - first)
     }
+
     
     var averageSpeed: Double {
         guard !dataPoints.isEmpty else { return 0.0 }

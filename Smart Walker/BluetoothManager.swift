@@ -10,12 +10,23 @@ private let radarName     = "SW-Radar"
 
 class BluetoothManager: NSObject, ObservableObject {
     
-    @Published var weightLeft: Double = 0.0     
-    @Published var weightRight: Double = 0.0    
-    @Published var distanceFt: Double = 0.0     
-    @Published var speedFtS: Double = 0.0       
-    
+    @Published var weightLeft: Double = 0.0
+    @Published var weightRight: Double = 0.0
+    @Published var distanceFt: Double = 0.0        // absolute, as sent by radar
+    @Published var trialDistanceFt: Double = 0.0   // zero-based for the current trial
+    @Published var speedFtS: Double = 0.0
+
+    private var distanceBaseline: Double = 0.0
+
     var weightTotal: Double { weightLeft + weightRight }
+
+    /// Capture the current absolute distance as the new zero for trial distance.
+    /// Call this at the start of a trial.
+    func resetTrialDistance() {
+        distanceBaseline = distanceFt
+        trialDistanceFt = 0.0
+    }
+
     
     @Published var leftFootConnected: Bool = false
     @Published var rightFootConnected: Bool = false
@@ -85,8 +96,10 @@ class BluetoothManager: NSObject, ObservableObject {
         rightFootConnected = true
         radarConnected = true
         distanceFt = 0.0
+        distanceBaseline = 0.0
+        trialDistanceFt = 0.0
         print("[SIM] Simulation started")
-        
+
         simTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             // Realistic-ish random values
@@ -94,9 +107,10 @@ class BluetoothManager: NSObject, ObservableObject {
             self.weightRight = Double.random(in: 60...90)
             self.speedFtS    = Double.random(in: 0.5...4.0)
             self.distanceFt += self.speedFtS * 0.2
+            self.trialDistanceFt = max(0.0, self.distanceFt - self.distanceBaseline)
         }
     }
-    
+
     private func stopSimulation() {
         simTimer?.invalidate()
         simTimer = nil
@@ -108,8 +122,11 @@ class BluetoothManager: NSObject, ObservableObject {
         weightRight = 0.0
         speedFtS = 0.0
         distanceFt = 0.0
+        trialDistanceFt = 0.0
+        distanceBaseline = 0.0
         print("[SIM] Simulation stopped")
     }
+
 }
 
 extension BluetoothManager: CBCentralManagerDelegate {
@@ -274,17 +291,19 @@ extension BluetoothManager: CBPeripheralDelegate {
             }
             
         } else if peripheral === radarPeripheral {
-            // Radar sends, to be modified
+            // Radar sends "distance,speed"
             let parts = str.split(separator: ",")
             if parts.count == 2 {
                 if let dist = Double(parts[0]) {
                     distanceFt = dist
+                    trialDistanceFt = max(0.0, dist - distanceBaseline)
                 }
                 if let speed = Double(parts[1]) {
                     speedFtS = speed
                 }
             }
         }
+
     }
 }
 

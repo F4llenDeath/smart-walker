@@ -160,9 +160,13 @@ struct ContentView: View {
             telemetryRow(label: "Total (lbs)", value: bluetooth.weightTotal)
             
             Divider()
-            
-            telemetryRow(label: "Distance (ft)", value: bluetooth.distanceFt)
+
+            telemetryRow(
+                label: dataStore.isRecording ? "Trial Distance (ft)" : "Distance (ft)",
+                value: dataStore.isRecording ? bluetooth.trialDistanceFt : bluetooth.distanceFt
+            )
             telemetryRow(label: "Speed (ft/s)", value: bluetooth.speedFtS)
+
         }
         .padding()
         .background(Color(.secondarySystemBackground))
@@ -228,6 +232,7 @@ struct ContentView: View {
             let now = Date()
             trialStartTime = now
             elapsedDisplay = 0
+            bluetooth.resetTrialDistance()
             dataStore.startTrial()
             displayTimer = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { _ in
                 if let start = trialStartTime {
@@ -238,11 +243,12 @@ struct ContentView: View {
                 dataStore.addDataPoint(
                     weightLeft: bluetooth.weightLeft,
                     weightRight: bluetooth.weightRight,
-                    distanceFt: bluetooth.distanceFt,
+                    distanceFt: bluetooth.trialDistanceFt,
                     speedFtS: bluetooth.speedFtS
                 )
             }
         }
+
     }
     
     // trials list
