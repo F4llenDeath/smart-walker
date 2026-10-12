@@ -1,0 +1,29 @@
+name: smart_walker
+description: Smart Walker telemetry and patient trial recording for iOS and Android.
+publish_to: 'none'
+version: 1.0.0+2
+
+environment:
+  sdk: '>=3.13.0 <4.0.0'
+  flutter: '>=3.47.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Flutter 3.47 exposes Material UI separately; Forui uses this app wrapper.
+  material_ui: 1.6.0
+  forui: 0.27.5
+  universal_ble: 2.3.0
+  fl_chart: 1.2.0
+  path_provider: 2.1.6
+  share_plus: 13.3.1
+  cross_file: ^0.3.5+2
+  uuid: 4.6.0
+  intl: ^0.20.3
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

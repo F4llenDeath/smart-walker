@@ -1,6 +1,20 @@
 # Smart Walker
 
-A SwiftUI + embedded hardware project for the Spring 2026 UW Madison BME Design [Smart Walker](https://bmedesign.engr.wisc.edu/projects/s26/smart_walker) project. The iOS app connects via BLE to three sensor modules mounted on a walker — two ESP32 load cells (feet) and a Raspberry Pi + TI AWR1843 mmWave radar — to display live weight, distance, and walking speed data. Trials can be recorded per patient and exported as CSV.
+A mobile app + embedded hardware project for the Spring 2026 UW Madison BME Design [Smart Walker](https://bmedesign.engr.wisc.edu/projects/s26/smart_walker) project. The app connects via BLE to three sensor modules mounted on a walker — two ESP32 load cells (feet) and a Raspberry Pi + TI AWR1843 mmWave radar — to display live weight, distance, and walking speed data. Trials can be recorded per patient and exported as CSV.
+
+## Flutter rewrite (iOS and Android)
+
+The new standalone application is in `app/`, using Flutter **3.47.7**, **Forui**
+for its interface and **universal_ble** for its hardware transport. It includes
+the existing patient, recording, history, chart, simulation, and CSV workflows,
+plus explicit interrupted-recording recovery and storage error handling.
+The original SwiftUI app and controller firmware remain unchanged alongside it.
+
+See `app/README.md` for setup, app identities, existing JSON migration,
+permissions, signing, architecture, and recording lifecycle policy. Recording is
+foreground-only and requires three fresh sensor streams. Debug builds use a
+separate identity; the production iOS identity is preserved for an in-place update.
+The screenshots below are from the original SwiftUI implementation.
 
 ## Features
 
@@ -46,6 +60,11 @@ Add patients via a popup picker; trials are organized per patient
 
 ```
 Smart Walker/
+├── app/                        # Flutter + Forui app (iOS / Android)
+│   ├── lib/                    # UI, models, app services, BLE and persistence
+│   ├── android/                # Android permissions and native host
+│   ├── ios/                    # iOS permissions, signing, and native host
+│   └── README.md               # Setup and migration notes
 ├── controller/
 │   ├── swLeftFoot.ino          # ESP32 left foot load cell → BLE
 │   ├── swRightFoot.ino         # ESP32 right foot load cell → BLE
