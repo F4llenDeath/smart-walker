@@ -103,9 +103,9 @@ class BluetoothManager: NSObject, ObservableObject {
         simTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             // Realistic-ish random values
-            self.weightLeft  = Double.random(in: 60...90)
-            self.weightRight = Double.random(in: 60...90)
-            self.speedFtS    = Double.random(in: 0.5...4.0)
+            self.weightLeft  = Double.random(in: 20...40)
+            self.weightRight = Double.random(in: 20...40)
+            self.speedFtS    = Double.random(in: 0.5...2.0)
             self.distanceFt += self.speedFtS * 0.2
             self.trialDistanceFt = max(0.0, self.distanceFt - self.distanceBaseline)
         }
