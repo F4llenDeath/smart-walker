@@ -313,40 +313,70 @@ totalDistanceFt  = 0.0
 currentSpeedFtS  = 0.0
 lastFrameTime    = 0.0
 frameCount       = 0
+frame_period_s = 0.1 #radar frame period from the config (frameCfg = 100ms)
+forward_sign= -1 #radar convenction: negative Doppler is approaching, flip to +1 is distance goes backwards
+min_points =3 #number of points needed to trust a speed
+min_y_m = 0.3 #ignore points closer than this ahead of the radar (m)
+min_cos = 0.5 #ignore points more than -60 degrees off straight ahead
+speed_hold_s = 0.5 #hold the last valid speed for up to 0.5 seconds during brief detection gaps
+
+lastFramenumber= None 
+lastSpeedMs = 0.0
+lastValidSpeedMs = 0.0
+lastValidSpeedTime = None
+
+
 
 # ------------------------------------------------------------------
 
-# Function to process a parsed frame — find closest object, compute distance/speed
+# Function to process a parsed frame and estimate forward speed and distance
 # (replaces the original update() which plotted a scatter chart)
-def processFrame(detObj):
-    global totalDistanceFt, currentSpeedFtS, lastFrameTime, frameCount
+def processFrame(detObj, frameNumber):
+    global totalDistanceFt, currentSpeedFtS,frameCount
+    global lastFramenumber, lastSpeedMs, lastValidSpeedMs, lastValidSpeedTime
 
     frameCount += 1
-    now = time.time()
-
+    #Time since previous frame, from the radar's own frame counter
+    frameNumber = int(frameNumber)
+    if lastFramenumber is None or frameNumber <= lastFramenumber or frameNumber- lastFramenumber > 20:
+        dt = frame_period_s
+    else: 
+        dt = (frameNumber - lastFramenumber)* frame_period_s
+    lastFramenumber = frameNumber
+    
+    measuredSpeedMs = None
     if detObj and detObj["numObj"] > 0 and len(detObj["x"]) > 0:
-        # Compute range for each detected point
-        ranges = np.sqrt(detObj["x"]**2 + detObj["y"]**2)
+        x= detObj["x"]
+        y= detObj["y"]
+        z= detObj["z"]
+        v= detObj["velocity"]
+        #Range to each detected point in meters (now includes z)
+        ranges = np.sqrt(x**2 + y**2 + z**2)
 
-        # Find closest object (ignore points closer than 1 cm)
-        valid = ranges > 0.01
-        if np.any(valid):
-            validRanges = np.where(valid, ranges, 9999.0)
-            closestIdx = np.argmin(validRanges)
-            closestVelocity = detObj["velocity"][closestIdx]
+        # Use points ahead of the radar and not too far off to the side.
+        cosAngle= y/ np.maximum(ranges, 1e-6)
+        usable = (y> min_y_m) & (cosAngle > min_cos)
+        if np.count_nonzero(usable) >= min_points:
+            #each point only sees the part of the motion along its line of sight so dividing by cos(angle) recovers walkers true speed
+            perPoint= forward_sign *v[usable]/cosAngle[usable]
+            measuredSpeedMs = float(np.median(perPoint))
 
-            speedMs = abs(float(closestVelocity))
-            currentSpeedFtS = speedMs * METERS_TO_FEET
-
-            if lastFrameTime > 0:
-                dt = now - lastFrameTime
-                totalDistanceFt += currentSpeedFtS * dt
-        else:
-            currentSpeedFtS = 0.0
+    now = time.monotonic()
+    if measuredSpeedMs is not None:
+        lastValidSpeedMs = measuredSpeedMs
+        lastValidSpeedTime = now
+        speedMs = measuredSpeedMs
+    elif lastValidSpeedTime is not None and now - lastValidSpeedTime <= speed_hold_s:
+        # Keep the displayed estimate and distance integration continuous briefly.
+        speedMs = lastValidSpeedMs
     else:
-        currentSpeedFtS = 0.0
-
-    lastFrameTime = now
+        speedMs = 0.0
+    
+    #average of last and current speed multiplied by elapsed time
+    distanceStepft = 0.5 * (abs(lastSpeedMs) + abs(speedMs)) * dt * METERS_TO_FEET
+    totalDistanceFt += distanceStepft
+    lastSpeedMs = speedMs
+    currentSpeedFtS = abs(speedMs) * METERS_TO_FEET
 
 # ------------------------------------------------------------------
 
@@ -356,7 +386,7 @@ def radarReaderThread(Dataport, configParameters, stopEvent):
         try:
             dataOK, frameNumber, detObj = readAndParseData18xx(Dataport, configParameters)
             if dataOK:
-                processFrame(detObj)
+                processFrame(detObj, frameNumber)
         except Exception as e:
             print(f"[Radar] Parse error: {e}")
         time.sleep(0.03)  # ~30 Hz, same as original (0.05 was ~20 Hz)
