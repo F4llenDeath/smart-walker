@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:forui/forui.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -16,16 +14,7 @@ class DeviceStatusPanel extends StatefulWidget {
 }
 
 class _DeviceStatusPanelState extends State<DeviceStatusPanel> {
-  late final Timer _ageTimer;
   bool _busy = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _ageTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
-    });
-  }
 
   Future<void> _retry() async {
     setState(() => _busy = true);
@@ -38,7 +27,10 @@ class _DeviceStatusPanelState extends State<DeviceStatusPanel> {
         await widget.dependencies.devices.start(requestPermissions: true);
       }
     } catch (exception) {
-      if (mounted) await showProblem(context, exception);
+      debugPrint('Sensor retry failed: $exception');
+      if (mounted) {
+        await showProblem(context, 'Unable to reconnect. Please try again.');
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -54,126 +46,140 @@ class _DeviceStatusPanelState extends State<DeviceStatusPanel> {
     builder: (context, _) {
       final devices = widget.dependencies.devices;
       final telemetry = widget.dependencies.telemetry;
+      final snapshot = telemetry.snapshot;
       final locked =
           widget.dependencies.recorder.locked || telemetry.switching || _busy;
-      return SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'Sensor connections',
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+      final connectionHint =
+          _busy ||
+              snapshot.ready ||
+              telemetry.simulating ||
+              telemetry.switching ||
+              !telemetry.foreground
+          ? null
+          : switch (devices.adapter) {
+              AdapterState.off => 'Enable Bluetooth in Settings.',
+              AdapterState.unauthorized =>
+                'Allow Bluetooth access in Settings, then retry.',
+              AdapterState.unsupported =>
+                'Bluetooth is not supported on this device.',
+              _ when devices.error != null && !devices.hasPermissions =>
+                'Allow Bluetooth access in Settings, then retry.',
+              _ when devices.error != null =>
+                'Unable to connect. Please retry.',
+              _ => null,
+            };
+      return SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Sensor connections',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600),
                   ),
-                  FButton.icon(
-                    variant: FButtonVariant.ghost,
-                    onPress: () => Navigator.pop(context),
-                    child: const Icon(FLucideIcons.x),
-                  ),
-                ],
-              ),
+                ),
+                FButton.icon(
+                  variant: FButtonVariant.ghost,
+                  onPress: () => Navigator.pop(context),
+                  child: const Icon(FLucideIcons.x),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            FTileGroup(
+              semanticsLabel: 'Sensor readiness',
+              physics: const NeverScrollableScrollPhysics(),
+              divider: FItemDivider.full,
+              children: [
+                _sensorTile(
+                  context,
+                  SensorRole.leftFoot,
+                  snapshot.leftReady,
+                  simulated: telemetry.simulating,
+                ),
+                _sensorTile(
+                  context,
+                  SensorRole.rightFoot,
+                  snapshot.rightReady,
+                  simulated: telemetry.simulating,
+                ),
+                _sensorTile(
+                  context,
+                  SensorRole.radar,
+                  snapshot.radarReady,
+                  simulated: telemetry.simulating,
+                ),
+              ],
+            ),
+            if (connectionHint != null) ...[
               const SizedBox(height: 12),
-              DetailRow('Bluetooth', switch (devices.adapter) {
-                AdapterState.on => 'On',
-                AdapterState.off => 'Off — enable in Settings',
-                AdapterState.unauthorized => 'Permission denied',
-                AdapterState.unsupported => 'Unsupported',
-                AdapterState.resetting => 'Resetting',
-                AdapterState.unknown => 'Unknown',
-              }),
-              DetailRow(
-                'Permission',
-                devices.hasPermissions ? 'Granted' : 'Required',
-              ),
-              DetailRow(
-                'Discovery',
-                devices.scanning ? 'Scanning…' : 'Not scanning',
-              ),
-              if (devices.error != null) ...[
-                const SizedBox(height: 12),
-                NoticeBanner(
-                  'Bluetooth needs attention',
-                  message: devices.error,
-                  destructive: true,
-                ),
-              ],
-              const SizedBox(height: 20),
-              for (final status in devices.sensors.values)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: SectionCard(
-                    title: status.role.label,
-                    subtitle: status.role.deviceName,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          telemetry.simulating
-                              ? 'Simulated'
-                              : status.phase.label,
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        if (!telemetry.simulating &&
-                            status.lastReceived != null)
-                          Text(
-                            'Last valid update ${DateTime.now().toUtc().difference(status.lastReceived!).inSeconds}s ago',
-                            style: TextStyle(
-                              color: context.theme.colors.mutedForeground,
-                            ),
-                          ),
-                        if (!telemetry.simulating && status.error != null)
-                          Text(status.error!),
-                      ],
-                    ),
-                  ),
-                ),
-              FButton(
-                variant: FButtonVariant.outline,
-                onPress: locked || telemetry.simulating ? null : _retry,
-                child: Text(
-                  _busy ? 'Reconnecting…' : 'Retry / request permission',
-                ),
-              ),
-              const SizedBox(height: 24),
-              FSwitch(
-                value: telemetry.simulating,
-                enabled: !locked,
-                label: const Text('Simulation mode'),
-                description: const Text(
-                  'Disconnect hardware and generate sample telemetry. Saved trials are labeled simulated.',
-                ),
-                onChange: (value) async {
-                  try {
-                    await telemetry.setSimulation(value);
-                  } catch (exception) {
-                    if (context.mounted) await showProblem(context, exception);
-                  }
-                },
-              ),
-              if (widget.dependencies.recorder.locked) ...[
-                const SizedBox(height: 12),
-                const Text(
-                  'Connection actions and source changes are locked until recording, saving, or recovery is resolved.',
-                ),
-              ],
+              NoticeBanner(connectionHint, destructive: true),
             ],
-          ),
+            const SizedBox(height: 16),
+            FButton(
+              variant: FButtonVariant.outline,
+              onPress: locked || telemetry.simulating ? null : _retry,
+              prefix: _busy
+                  ? const FCircularProgress(
+                      semanticsLabel: 'Retrying sensor connections',
+                    )
+                  : null,
+              child: const Text('Retry'),
+            ),
+            const SizedBox(height: 24),
+            FSwitch(
+              value: telemetry.simulating,
+              enabled: !locked,
+              label: const Text('Simulation mode'),
+              onChange: (value) async {
+                try {
+                  await telemetry.setSimulation(value);
+                } catch (exception) {
+                  debugPrint('Simulation mode change failed: $exception');
+                  if (context.mounted) {
+                    await showProblem(
+                      context,
+                      'Unable to change simulation mode. Please try again.',
+                    );
+                  }
+                }
+              },
+            ),
+          ],
         ),
       );
     },
   );
 
-  @override
-  void dispose() {
-    _ageTimer.cancel();
-    super.dispose();
-  }
+  FTile _sensorTile(
+    BuildContext context,
+    SensorRole role,
+    bool ready, {
+    required bool simulated,
+  }) => FTile.raw(
+    child: Semantics(
+      container: true,
+      label: role.label,
+      value: ready ? (simulated ? 'Ready, simulated' : 'Ready') : 'Not ready',
+      excludeSemantics: true,
+      child: Row(
+        children: [
+          Expanded(child: Text(role.label)),
+          Icon(
+            ready ? FLucideIcons.check : FLucideIcons.x,
+            size: 20,
+            color: ready
+                ? (context.theme.colors.brightness == Brightness.dark
+                      ? Colors.green.shade400
+                      : Colors.green.shade700)
+                : context.theme.colors.destructive,
+          ),
+        ],
+      ),
+    ),
+  );
 }

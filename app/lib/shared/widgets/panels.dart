@@ -66,8 +66,10 @@ Future<bool> confirmAction(
     await showFDialog<bool>(
       context: context,
       builder: (context, style, animation) => FDialog(
+        style: style,
         animation: animation,
-        builder: (context, _) => Padding(
+        clipBehavior: Clip.antiAlias,
+        builder: (context, _) => SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -105,8 +107,10 @@ Future<void> showProblem(BuildContext context, Object exception) =>
     showFDialog<void>(
       context: context,
       builder: (context, style, animation) => FDialog(
+        style: style,
         animation: animation,
-        builder: (context, _) => Padding(
+        clipBehavior: Clip.antiAlias,
+        builder: (context, _) => SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -132,12 +136,14 @@ Future<void> showPanel(BuildContext context, Widget child) {
     return showFDialog<void>(
       context: context,
       builder: (context, style, animation) => FDialog(
+        style: style,
         animation: animation,
+        clipBehavior: Clip.antiAlias,
         builder: (context, _) => ConstrainedBox(
           constraints: BoxConstraints(
             maxHeight: MediaQuery.sizeOf(context).height * 0.85,
           ),
-          child: child,
+          child: SafeArea(top: false, child: child),
         ),
       ),
     );
@@ -147,7 +153,28 @@ Future<void> showPanel(BuildContext context, Widget child) {
     side: FLayout.btt,
     mainAxisMaxRatio: 0.9,
     useSafeArea: true,
-    builder: (_) => child,
+    builder: (context) => FCard(
+      style: FCardStyleDelta.delta(
+        decoration: DecorationDelta.shapeDelta(
+          color: context.theme.colors.card,
+          shape: RoundedSuperellipseBorder(
+            side: BorderSide(
+              color: context.theme.colors.border,
+              width: context.theme.style.borderWidth,
+            ),
+            borderRadius: BorderRadius.only(
+              topLeft: context.theme.style.borderRadius.lg.topLeft,
+              topRight: context.theme.style.borderRadius.lg.topRight,
+            ),
+          ),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: SafeArea(
+        top: false,
+        child: SizedBox(width: double.infinity, child: child),
+      ),
+    ),
   );
 }
 

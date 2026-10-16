@@ -67,105 +67,100 @@ class _PatientPickerState extends State<PatientPicker> {
       final patients = widget.dependencies.patients;
       final enabled =
           !_busy && !patients.saving && !widget.dependencies.recorder.locked;
-      return SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'Select patient',
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+      return SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Select patient',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600),
                   ),
-                  FButton.icon(
-                    variant: FButtonVariant.ghost,
-                    onPress: () => Navigator.pop(context),
-                    child: const Icon(FLucideIcons.x),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              if (_error != null) ...[
-                NoticeBanner(
-                  'Patient action failed',
-                  message: _error,
-                  destructive: true,
                 ),
-                const SizedBox(height: 12),
+                FButton.icon(
+                  variant: FButtonVariant.ghost,
+                  onPress: () => Navigator.pop(context),
+                  child: const Icon(FLucideIcons.x),
+                ),
               ],
-              for (final patient in patients.patients)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: FButton(
-                          variant: FButtonVariant.outline,
-                          prefix: Icon(
-                            patient.isUnassigned
-                                ? FLucideIcons.userRound
-                                : FLucideIcons.user,
-                          ),
-                          suffix: patients.selected.id == patient.id
-                              ? const Icon(FLucideIcons.check)
-                              : null,
-                          onPress: !enabled
-                              ? null
-                              : () {
-                                  try {
-                                    patients.select(patient.id);
-                                    Navigator.pop(context);
-                                  } catch (exception) {
-                                    setState(() => _error = '$exception');
-                                  }
-                                },
-                          child: Text(
-                            patient.name,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ),
-                      if (!patient.isUnassigned) ...[
-                        const SizedBox(width: 8),
-                        FButton.icon(
-                          variant: FButtonVariant.ghost,
-                          semanticsLabel: 'Delete ${patient.name}',
-                          onPress: enabled ? () => _delete(patient) : null,
-                          child: const Icon(FLucideIcons.trash2),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              const SizedBox(height: 20),
-              FTextField(
-                control: FTextFieldControl.managed(
-                  controller: _name,
-                  onChange: (_) => setState(() {}),
-                ),
-                label: const Text('New patient'),
-                hint: 'Patient name',
-                enabled: enabled,
-                textCapitalization: TextCapitalization.words,
-                textInputAction: TextInputAction.done,
-                onSubmit: (_) => _add(),
+            ),
+            const SizedBox(height: 20),
+            if (_error != null) ...[
+              NoticeBanner(
+                'Patient action failed',
+                message: _error,
+                destructive: true,
               ),
               const SizedBox(height: 12),
-              FButton(
-                onPress: enabled && _name.text.trim().isNotEmpty ? _add : null,
-                prefix: const Icon(FLucideIcons.plus),
-                child: Text(_busy ? 'Saving…' : 'Add patient'),
-              ),
             ],
-          ),
+            for (final patient in patients.patients)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: FButton(
+                        variant: FButtonVariant.outline,
+                        prefix: Icon(
+                          patient.isUnassigned
+                              ? FLucideIcons.userRound
+                              : FLucideIcons.user,
+                        ),
+                        suffix: patients.selected.id == patient.id
+                            ? const Icon(FLucideIcons.check)
+                            : null,
+                        onPress: !enabled
+                            ? null
+                            : () {
+                                try {
+                                  patients.select(patient.id);
+                                  Navigator.pop(context);
+                                } catch (exception) {
+                                  setState(() => _error = '$exception');
+                                }
+                              },
+                        child: Text(
+                          patient.name,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
+                    if (!patient.isUnassigned) ...[
+                      const SizedBox(width: 8),
+                      FButton.icon(
+                        variant: FButtonVariant.ghost,
+                        semanticsLabel: 'Delete ${patient.name}',
+                        onPress: enabled ? () => _delete(patient) : null,
+                        child: const Icon(FLucideIcons.trash2),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            const SizedBox(height: 20),
+            FTextField(
+              control: FTextFieldControl.managed(
+                controller: _name,
+                onChange: (_) => setState(() {}),
+              ),
+              label: const Text('New patient'),
+              hint: 'Patient name',
+              enabled: enabled,
+              textCapitalization: TextCapitalization.words,
+              textInputAction: TextInputAction.done,
+              onSubmit: (_) => _add(),
+            ),
+            const SizedBox(height: 12),
+            FButton(
+              onPress: enabled && _name.text.trim().isNotEmpty ? _add : null,
+              prefix: const Icon(FLucideIcons.plus),
+              child: Text(_busy ? 'Saving…' : 'Add patient'),
+            ),
+          ],
         ),
       );
     },

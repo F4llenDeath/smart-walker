@@ -225,65 +225,54 @@ class DashboardPage extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 20),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final scale = MediaQuery.textScalerOf(context).scale(1);
-                    final columns = constraints.maxWidth >= 850 && scale < 1.4
-                        ? 3
-                        : constraints.maxWidth >= 350 && scale < 1.7
-                        ? 2
-                        : 1;
-                    final width =
-                        (constraints.maxWidth - (columns - 1) * 12) / columns;
-                    return Wrap(
-                      spacing: 12,
-                      runSpacing: 12,
-                      children:
-                          [
-                                _Metric(
-                                  'Left weight',
-                                  measurement(snapshot.weightLeft),
-                                  'lbs',
-                                  FLucideIcons.footprints,
-                                ),
-                                _Metric(
-                                  'Right weight',
-                                  measurement(snapshot.weightRight),
-                                  'lbs',
-                                  FLucideIcons.footprints,
-                                ),
-                                _Metric(
-                                  'Total weight',
-                                  measurement(snapshot.weightTotal),
-                                  'lbs',
-                                  FLucideIcons.scale,
-                                ),
-                                _Metric(
-                                  recorder.recording
-                                      ? 'Trial distance'
-                                      : 'Distance',
-                                  measurement(
-                                    recorder.recording
-                                        ? recorder.trialDistance
-                                        : snapshot.distanceFt,
-                                  ),
-                                  'ft',
-                                  FLucideIcons.route,
-                                ),
-                                _Metric(
-                                  'Speed',
-                                  measurement(snapshot.speedFtS),
-                                  'ft/s',
-                                  FLucideIcons.gauge,
-                                ),
-                              ]
-                              .map(
-                                (metric) =>
-                                    SizedBox(width: width, child: metric),
-                              )
-                              .toList(),
-                    );
-                  },
+                FTileGroup.merge(
+                  semanticsLabel: 'Live measurements',
+                  physics: const NeverScrollableScrollPhysics(),
+                  divider: FItemDivider.full,
+                  children: [
+                    FTileGroup(
+                      divider: FItemDivider.none,
+                      children: [
+                        _metricTile(
+                          context,
+                          'Left weight',
+                          snapshot.weightLeft,
+                          'lbs',
+                        ),
+                        _metricTile(
+                          context,
+                          'Right weight',
+                          snapshot.weightRight,
+                          'lbs',
+                        ),
+                        _metricTile(
+                          context,
+                          'Total weight',
+                          snapshot.weightTotal,
+                          'lbs',
+                        ),
+                      ],
+                    ),
+                    FTileGroup(
+                      divider: FItemDivider.none,
+                      children: [
+                        _metricTile(
+                          context,
+                          recorder.recording ? 'Trial distance' : 'Distance',
+                          recorder.recording
+                              ? recorder.trialDistance
+                              : snapshot.distanceFt,
+                          'ft',
+                        ),
+                        _metricTile(
+                          context,
+                          'Speed',
+                          snapshot.speedFtS,
+                          'ft/s',
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 20),
                 SectionCard(
@@ -326,16 +315,6 @@ class DashboardPage extends StatelessWidget {
                               : recorder.recording
                               ? 'Stop and save trial'
                               : 'Start trial',
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        recorder.recording
-                            ? 'Latest sensor values are captured every 200 ms.'
-                            : recorder.startUnavailable ?? 'Ready to record. Units: pounds, feet, and feet/second.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: context.theme.colors.mutedForeground,
                         ),
                       ),
                     ],
@@ -401,52 +380,50 @@ class DashboardPage extends StatelessWidget {
       );
     },
   );
-}
 
-class _Metric extends StatelessWidget {
-  const _Metric(this.label, this.value, this.unit, this.icon);
-  final String label;
-  final String value;
-  final String unit;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) => FCard(
-    child: Padding(
-      padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 20, color: context.theme.colors.mutedForeground),
-          const SizedBox(height: 14),
-          Text(
-            label,
-            style: TextStyle(color: context.theme.colors.mutedForeground),
-          ),
-          const SizedBox(height: 6),
-          Wrap(
-            crossAxisAlignment: WrapCrossAlignment.end,
-            spacing: 6,
-            children: [
-              Text(
-                value,
-                style: const TextStyle(
-                  fontSize: 30,
-                  fontWeight: FontWeight.w600,
-                  fontFeatures: [FontFeature.tabularFigures()],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 5),
-                child: Text(
-                  unit,
-                  style: TextStyle(color: context.theme.colors.mutedForeground),
-                ),
-              ),
-            ],
-          ),
-        ],
+  FTile _metricTile(
+    BuildContext context,
+    String label,
+    double? value,
+    String unit,
+  ) {
+    final title = Text(
+      '$label ($unit)',
+      overflow: TextOverflow.visible,
+      style: TextStyle(color: context.theme.colors.mutedForeground),
+    );
+    final reading = Text(
+      measurement(value),
+      textAlign: TextAlign.end,
+      style: TextStyle(
+        color: context.theme.colors.foreground,
+        fontSize: 20,
+        fontWeight: FontWeight.w500,
+        fontFeatures: const [FontFeature.tabularFigures()],
       ),
-    ),
-  );
+    );
+
+    // Keep one metric per row even when large text needs a taller layout.
+    // FTile.raw avoids the standard title/details truncation in that case.
+    if (MediaQuery.sizeOf(context).width < 360 ||
+        MediaQuery.textScalerOf(context).scale(16) >= 24) {
+      return FTile.raw(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [title, const SizedBox(height: 4), reading],
+        ),
+      );
+    }
+    return FTile(
+      title: title,
+      // Non-text details receive layout priority in Forui, so labels can wrap
+      // instead of truncating a measurement when horizontal space is tight.
+      details: Align(
+        alignment: AlignmentDirectional.centerEnd,
+        widthFactor: 1,
+        heightFactor: 1,
+        child: reading,
+      ),
+    );
+  }
 }
