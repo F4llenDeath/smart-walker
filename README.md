@@ -2,19 +2,14 @@
 
 A mobile app + embedded hardware project for the Spring 2026 UW Madison BME Design [Smart Walker](https://bmedesign.engr.wisc.edu/projects/s26/smart_walker) project. The app connects via BLE to three sensor modules mounted on a walker — two ESP32 load cells (feet) and a Raspberry Pi + TI AWR1843 mmWave radar — to display live weight, distance, and walking speed data. Trials can be recorded per patient and exported as CSV.
 
-## Flutter rewrite (iOS and Android)
+## Flutter rewrite
 
-The new standalone application is in `app/`, using Flutter **3.47.7**, **Forui**
-for its interface and **universal_ble** for its hardware transport. It includes
+The new standalone application is in `app/`, using Flutter 3.47.7, [Forui](https://forui.dev)
+for its interface and [universal_ble](https://pub.dev/packages/universal_ble) for its hardware transport. It includes
 the existing patient, recording, history, chart, simulation, and CSV workflows,
-plus explicit interrupted-recording recovery and storage error handling.
-The original SwiftUI app and controller firmware remain unchanged alongside it.
+plus explicit interrupted-recording recovery and storage error handling. Rewriting work is still in progress. 
 
-See `app/README.md` for setup, app identities, existing JSON migration,
-permissions, signing, architecture, and recording lifecycle policy. Recording is
-foreground-only and requires three fresh sensor streams. Debug builds use a
-separate identity; the production iOS identity is preserved for an in-place update.
-The screenshots below are from the original SwiftUI implementation.
+See `app/README.md` for more information
 
 ## Features
 
