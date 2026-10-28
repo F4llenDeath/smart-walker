@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -8,6 +9,7 @@ import '../core/ble_protocol.dart';
 import '../data/storage/recording_draft_store.dart';
 import '../domain/models/active_recording.dart';
 import '../domain/models/data_point.dart';
+import '../domain/models/live_trial_series.dart';
 import '../domain/models/patient.dart';
 import '../domain/models/trial.dart';
 import 'patient_controller.dart';
@@ -24,6 +26,8 @@ class TrialRecorder extends ChangeNotifier {
   final PatientController patients;
   final RecordingDraftStore drafts;
   final ValueNotifier<Duration> elapsed = ValueNotifier(Duration.zero);
+  final ValueNotifier<LiveTrialSeries?> _liveSeries = ValueNotifier(null);
+  final ListQueue<DataPoint> _recentPoints = ListQueue();
   final Stopwatch _clock = Stopwatch();
   final List<DataPoint> _points = [];
   Timer? _samples;
@@ -50,6 +54,7 @@ class TrialRecorder extends ChangeNotifier {
   String? _startInterruption;
 
   bool get recording => state == RecorderState.recording;
+  ValueListenable<LiveTrialSeries?> get liveSeries => _liveSeries;
   bool get locked =>
       state != RecorderState.idle ||
       recovered != null ||
@@ -109,6 +114,8 @@ class TrialRecorder extends ChangeNotifier {
     baseline = snapshot.distanceFt!;
     _lastAbsolute = baseline;
     _points.clear();
+    _recentPoints.clear();
+    _liveSeries.value = null;
     _completed = null;
     _successNotice = null;
     error = null;
@@ -148,6 +155,7 @@ class TrialRecorder extends ChangeNotifier {
     _clock.start();
     elapsed.value = Duration.zero;
     state = RecorderState.recording;
+    _liveSeries.value = LiveTrialSeries(startDate: _start!, samples: const []);
     _samples = Timer.periodic(BleProtocol.sampleInterval, (_) => _sample());
     _display = Timer.periodic(const Duration(milliseconds: 30), (_) {
       elapsed.value = _clock.elapsed;
@@ -201,14 +209,33 @@ class TrialRecorder extends ChangeNotifier {
     _telemetryChanged();
     if (!recording) return;
     final snapshot = telemetry.snapshot;
-    _points.add(
-      DataPoint(
-        timestamp: DateTime.now().toUtc(),
-        weightLeft: snapshot.weightLeft!,
-        weightRight: snapshot.weightRight!,
-        distanceFt: max(0, snapshot.distanceFt! - baseline),
-        speedFtS: snapshot.speedFtS!,
-      ),
+    final point = DataPoint(
+      timestamp: DateTime.now().toUtc(),
+      weightLeft: snapshot.weightLeft!,
+      weightRight: snapshot.weightRight!,
+      distanceFt: max(0, snapshot.distanceFt! - baseline),
+      speedFtS: snapshot.speedFtS!,
+    );
+    _points.add(point);
+    _recentPoints.addLast(point);
+
+    // Keep one point just before the window for line continuity at its edge.
+    final cutoff = point.timestamp.subtract(LiveTrialSeries.visibleWindow);
+    while (_recentPoints.length > 1 &&
+        _recentPoints.elementAt(1).timestamp.isBefore(cutoff)) {
+      _recentPoints.removeFirst();
+    }
+    // Also cap by sample count so wall-clock adjustments cannot grow the view.
+    final limit =
+        LiveTrialSeries.visibleWindow.inMilliseconds ~/
+            BleProtocol.sampleInterval.inMilliseconds +
+        2;
+    while (_recentPoints.length > limit) {
+      _recentPoints.removeFirst();
+    }
+    _liveSeries.value = LiveTrialSeries(
+      startDate: _start!,
+      samples: _recentPoints,
     );
   }
 
@@ -235,6 +262,8 @@ class TrialRecorder extends ChangeNotifier {
     }
     if (!recording) return;
     _cancelTimers();
+    _recentPoints.clear();
+    _liveSeries.value = null;
     _completed = _trial(
       end: DateTime.now().toUtc(),
       completion: reason == null
@@ -348,6 +377,8 @@ class TrialRecorder extends ChangeNotifier {
     _disposed = true;
     _cancelTimers();
     telemetry.removeListener(_telemetryChanged);
+    _recentPoints.clear();
+    _liveSeries.dispose();
     elapsed.dispose();
     super.dispose();
   }

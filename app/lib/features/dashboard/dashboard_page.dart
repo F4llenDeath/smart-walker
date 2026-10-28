@@ -8,49 +8,47 @@ import '../../shared/widgets/panels.dart';
 import '../devices/device_status_panel.dart';
 import '../patients/patient_picker.dart';
 import '../trials/trial_detail_page.dart';
+import 'live_trial_charts.dart';
+import 'trial_recording_bar.dart';
 
 class DashboardPage extends StatelessWidget {
   const DashboardPage({required this.dependencies, super.key});
   final AppDependencies dependencies;
 
-  Future<void> _perform(
-    BuildContext context,
-    Future<void> Function() action,
-  ) async {
-    try {
-      await action();
-    } catch (exception) {
-      if (context.mounted) await showProblem(context, exception);
-    }
-  }
-
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: Listenable.merge([
       dependencies.patients,
-      dependencies.telemetry,
       dependencies.recorder,
     ]),
     builder: (context, _) {
       final patients = dependencies.patients;
       final telemetry = dependencies.telemetry;
       final recorder = dependencies.recorder;
-      final snapshot = telemetry.snapshot;
       return FScaffold(
         childPad: false,
+        scaffoldStyle: const FScaffoldStyleDelta.delta(
+          footerDecoration: DecorationDelta.boxDelta(border: Border()),
+        ),
+        footer: TrialRecordingBar(recorder: recorder),
         header: FHeader(
           title: const Text('Smart Walker'),
           suffixes: [
-            FButton(
-              variant: FButtonVariant.outline,
-              mainAxisSize: MainAxisSize.min,
-              prefix: const Icon(FLucideIcons.bluetooth),
-              onPress: () => showPanel(
-                context,
-                DeviceStatusPanel(dependencies: dependencies),
-              ),
-              child: Text(
-                telemetry.simulating ? 'SIM' : '${snapshot.readyCount}/3',
+            ListenableBuilder(
+              listenable: telemetry,
+              builder: (context, _) => FButton(
+                variant: FButtonVariant.outline,
+                mainAxisSize: MainAxisSize.min,
+                prefix: const Icon(FLucideIcons.bluetooth),
+                onPress: () => showPanel(
+                  context,
+                  DeviceStatusPanel(dependencies: dependencies),
+                ),
+                child: Text(
+                  telemetry.simulating
+                      ? 'SIM'
+                      : '${telemetry.snapshot.readyCount}/3',
+                ),
               ),
             ),
           ],
@@ -62,13 +60,18 @@ class DashboardPage extends StatelessWidget {
             child: ListView(
               padding: const EdgeInsets.all(20),
               children: [
-                if (telemetry.simulating) ...[
-                  const NoticeBanner(
-                    'Simulation mode',
-                    message: 'These measurements are generated, not received from the walker.',
-                  ),
-                  const SizedBox(height: 16),
-                ],
+                ListenableBuilder(
+                  listenable: telemetry,
+                  builder: (context, _) => telemetry.simulating
+                      ? const Padding(
+                          padding: EdgeInsets.only(bottom: 16),
+                          child: NoticeBanner(
+                            'Simulation mode',
+                            message: 'These measurements are generated, not received from the walker.',
+                          ),
+                        )
+                      : const SizedBox.shrink(),
+                ),
                 if (patients.error != null) ...[
                   NoticeBanner(
                     'Storage needs attention',
@@ -225,101 +228,67 @@ class DashboardPage extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 20),
-                FTileGroup.merge(
-                  semanticsLabel: 'Live measurements',
-                  physics: const NeverScrollableScrollPhysics(),
-                  divider: FItemDivider.full,
-                  children: [
-                    FTileGroup(
-                      divider: FItemDivider.none,
+                ListenableBuilder(
+                  listenable: telemetry,
+                  builder: (context, _) {
+                    final snapshot = telemetry.snapshot;
+                    return FTileGroup.merge(
+                      semanticsLabel: 'Live measurements',
+                      physics: const NeverScrollableScrollPhysics(),
+                      divider: FItemDivider.full,
                       children: [
-                        _metricTile(
-                          context,
-                          'Left weight',
-                          snapshot.weightLeft,
-                          'lbs',
+                        FTileGroup(
+                          divider: FItemDivider.none,
+                          children: [
+                            _metricTile(
+                              context,
+                              'Left weight',
+                              snapshot.weightLeft,
+                              'lbs',
+                            ),
+                            _metricTile(
+                              context,
+                              'Right weight',
+                              snapshot.weightRight,
+                              'lbs',
+                            ),
+                            _metricTile(
+                              context,
+                              'Total weight',
+                              snapshot.weightTotal,
+                              'lbs',
+                            ),
+                          ],
                         ),
-                        _metricTile(
-                          context,
-                          'Right weight',
-                          snapshot.weightRight,
-                          'lbs',
-                        ),
-                        _metricTile(
-                          context,
-                          'Total weight',
-                          snapshot.weightTotal,
-                          'lbs',
+                        FTileGroup(
+                          divider: FItemDivider.none,
+                          children: [
+                            _metricTile(
+                              context,
+                              recorder.recording
+                                  ? 'Trial distance'
+                                  : 'Distance',
+                              recorder.recording
+                                  ? recorder.trialDistance
+                                  : snapshot.distanceFt,
+                              'ft',
+                            ),
+                            _metricTile(
+                              context,
+                              'Speed',
+                              snapshot.speedFtS,
+                              'ft/s',
+                            ),
+                          ],
                         ),
                       ],
-                    ),
-                    FTileGroup(
-                      divider: FItemDivider.none,
-                      children: [
-                        _metricTile(
-                          context,
-                          recorder.recording ? 'Trial distance' : 'Distance',
-                          recorder.recording
-                              ? recorder.trialDistance
-                              : snapshot.distanceFt,
-                          'ft',
-                        ),
-                        _metricTile(
-                          context,
-                          'Speed',
-                          snapshot.speedFtS,
-                          'ft/s',
-                        ),
-                      ],
-                    ),
-                  ],
+                    );
+                  },
                 ),
-                const SizedBox(height: 20),
-                SectionCard(
-                  title: recorder.recording
-                      ? 'Recording for ${recorder.patientName}'
-                      : 'Trial recording',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      ValueListenableBuilder<Duration>(
-                        valueListenable: recorder.elapsed,
-                        builder: (context, elapsed, _) => Text(
-                          elapsedText(elapsed),
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 38,
-                            fontWeight: FontWeight.w600,
-                            fontFeatures: [FontFeature.tabularFigures()],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      FButton(
-                        variant: recorder.recording
-                            ? FButtonVariant.destructive
-                            : FButtonVariant.primary,
-                        prefix: Icon(
-                          recorder.recording
-                              ? FLucideIcons.square
-                              : FLucideIcons.play,
-                        ),
-                        onPress: recorder.recording
-                            ? () => _perform(context, recorder.stop)
-                            : recorder.startUnavailable == null
-                            ? () => _perform(context, recorder.start)
-                            : null,
-                        child: Text(
-                          recorder.state == RecorderState.saving
-                              ? 'Saving…'
-                              : recorder.recording
-                              ? 'Stop and save trial'
-                              : 'Start trial',
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                if (recorder.recording) ...[
+                  const SizedBox(height: 20),
+                  LiveTrialCharts(recorder: recorder),
+                ],
                 const SizedBox(height: 24),
                 Text(
                   'Past trials · ${patients.selected.name}',

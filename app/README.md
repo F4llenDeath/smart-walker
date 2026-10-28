@@ -76,6 +76,10 @@ No automated tests, emulator/simulator runs, or hardware checks were performed.
 - Automatic three-sensor BLE discovery, subscriptions, and reconnection.
 - Patient selection, creation, and confirmed patient/trial deletion.
 - Nominal 200 ms trial samples and a monotonic elapsed display.
+- Dashboard recording controls pinned above the bottom safe area; the clock is
+  shown only while recording, with no recording-panel title or explanation.
+- Live speed and left/right weight charts during recording, showing a rolling
+  30-second window from the same samples that are saved in the trial.
 - Newest-first patient history, summary statistics, speed and weight charts.
 - CSV **file** sharing, including iPad popover positioning.
 - Exclusive simulation mode, with simulated trials clearly labeled.
@@ -118,6 +122,16 @@ Start is enabled only when storage/recovery is resolved and all three streams ar
 ready. A valid packet must have arrived within **two seconds**. Samples capture
 the latest values from each device; they are not synchronized hardware packets.
 Late timer ticks do not produce fabricated catch-up samples.
+
+The dashboard's recording control stays visible while scrolling and reserves its
+own space rather than covering charts or history. Live charts appear below the
+measurement rows only during a trial, then disappear when it stops. Each trial
+starts with an empty live series. The chart display keeps a bounded recent-sample
+buffer (plus an edge sample for line continuity), while persistence, summaries,
+and CSV export retain the complete recording. Historical trial charts continue
+to show the full trial. Live Y-axis limits expand when needed without shrinking
+on every sample. Chart updates occur at the sampling cadence, independently of
+the more frequent elapsed-time display updates.
 
 Starting a trial captures the patient, source, and app-side distance baseline.
 No reset or other command is sent to a controller. Patient/source changes and
