@@ -1,0 +1,247 @@
+name: App release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag, such as v0.2.0 (must already be on main)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Never let tag pushes and manual retries publish the same version concurrently.
+concurrency:
+  group: app-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CI: 'true'
+  FLUTTER_SUPPRESS_ANALYTICS: 'true'
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      commit: ${{ steps.release.outputs.commit }}
+      version: ${{ steps.release.outputs.version }}
+      build_number: ${{ steps.release.outputs.build_number }}
+      flutter_version: ${{ steps.release.outputs.flutter_version }}
+    steps:
+      # Use the main-branch helper to validate untrusted manual tag input before
+      # any signing secrets are made available to a platform build.
+      - name: Check out release branch and all tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate source, version, and release history
+        id: release
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 app/tool/release.py validate \
+            --tag "$RELEASE_TAG" --base-ref origin/main \
+            --check-github --github-output "$GITHUB_OUTPUT"
+      - name: Check Android signing is configured before starting builds
+        env:
+          SIGNING_CONFIGURED: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' && secrets.ANDROID_KEYSTORE_PASSWORD != '' && secrets.ANDROID_KEY_ALIAS != '' && secrets.ANDROID_KEY_PASSWORD != '' }}
+        run: |
+          if [[ "$SIGNING_CONFIGURED" != 'true' ]]; then
+            echo '::error::Configure the four ANDROID_* signing secrets documented in app/RELEASING.md.'
+            exit 1
+          fi
+
+  android:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+      RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+      APP_VERSION: ${{ needs.validate.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: app
+    steps:
+      - name: Check out exact release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Recheck source identity
+        run: python3 tool/release.py check-source --tag "$RELEASE_TAG" --commit "$RELEASE_COMMIT"
+      - name: Install Java
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: ${{ needs.validate.outputs.flutter_version }}
+          cache: true
+      - name: Configure Android SDK and native toolchain
+        run: |
+          test -d "$ANDROID_HOME"
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          # yes exits when the consumer closes stdin; preserve sdkmanager's exit
+          # status rather than reporting that expected SIGPIPE as a failure.
+          set +o pipefail
+          yes | sdkmanager --licenses > /dev/null
+          set -o pipefail
+          sdkmanager 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358' 'cmake;3.22.1'
+          flutter config --android-sdk "$ANDROID_HOME"
+          flutter config --jdk-dir "$JAVA_HOME"
+          for variable in ANDROID_NDK ANDROID_NDK_HOME ANDROID_NDK_ROOT ANDROID_NDK_LATEST_HOME; do
+            echo "$variable=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          done
+          flutter precache --android
+      - name: Restore Gradle wrapper from pinned Flutter SDK
+        run: |
+          # Flutter's project template ignores these binary/generated files.
+          # Restore only the wrapper; do not regenerate customized native hosts.
+          mkdir -p android/gradle/wrapper
+          cp "$FLUTTER_ROOT/bin/cache/artifacts/gradle_wrapper/gradlew" android/gradlew
+          cp "$FLUTTER_ROOT/bin/cache/artifacts/gradle_wrapper/gradlew.bat" android/gradlew.bat
+          cp "$FLUTTER_ROOT/bin/cache/artifacts/gradle_wrapper/gradle/wrapper/gradle-wrapper.jar" android/gradle/wrapper/gradle-wrapper.jar
+          chmod +x android/gradlew
+      - name: Resolve locked dependencies and check application
+        run: |
+          flutter pub get --enforce-lockfile
+          dart format --output=none --set-exit-if-changed lib
+          flutter analyze --no-pub
+      - name: Prepare temporary release signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: python3 tool/release.py android-signing --keystore "$RUNNER_TEMP/smart-walker-release.jks"
+      - name: Build signed universal APK
+        run: |
+          flutter build apk --release --no-pub
+          mkdir -p "$RUNNER_TEMP/android-artifacts"
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            "$RUNNER_TEMP/android-artifacts/SmartWalker-$APP_VERSION-android.apk"
+      - name: Verify signature and record provenance
+        run: |
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs \
+            "$RUNNER_TEMP/android-artifacts/SmartWalker-$APP_VERSION-android.apk" \
+            > "$RUNNER_TEMP/apk-certificate.txt"
+          python3 tool/release.py record --platform android \
+            --artifact "$RUNNER_TEMP/android-artifacts/SmartWalker-$APP_VERSION-android.apk" \
+            --certificate "$RUNNER_TEMP/apk-certificate.txt"
+      - name: Remove signing files
+        if: always()
+        run: rm -f android/key.properties "$RUNNER_TEMP/smart-walker-release.jks"
+      - name: Store Android release artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: android-release
+          path: ${{ runner.temp }}/android-artifacts/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  ios:
+    needs: validate
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+      RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+      APP_VERSION: ${{ needs.validate.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: app
+    steps:
+      - name: Check out exact release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Recheck source identity
+        run: python3 tool/release.py check-source --tag "$RELEASE_TAG" --commit "$RELEASE_COMMIT"
+      - name: Select full Xcode installation
+        run: |
+          test -d /Applications/Xcode_16.4.app
+          # Native asset hooks do not inherit DEVELOPER_DIR, so select Xcode
+          # globally on this disposable runner as well as setting the env var.
+          sudo xcode-select --switch /Applications/Xcode_16.4.app/Contents/Developer
+          echo 'DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer' >> "$GITHUB_ENV"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: ${{ needs.validate.outputs.flutter_version }}
+          cache: true
+      - name: Resolve dependencies with Swift Package Manager
+        run: |
+          flutter config --enable-swift-package-manager
+          flutter pub get --enforce-lockfile
+      - name: Build unsigned iOS release app
+        run: flutter build ios --release --no-codesign --no-pub
+      - name: Package documentation IPA and record provenance
+        run: |
+          mkdir -p "$RUNNER_TEMP/ios-artifacts"
+          python3 tool/release.py package-ios --app build/ios/iphoneos/Runner.app \
+            --output "$RUNNER_TEMP/ios-artifacts/SmartWalker-$APP_VERSION-ios-unsigned.ipa"
+          python3 tool/release.py record --platform ios \
+            --artifact "$RUNNER_TEMP/ios-artifacts/SmartWalker-$APP_VERSION-ios-unsigned.ipa"
+      - name: Store iOS documentation artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ios-release
+          path: ${{ runner.temp }}/ios-artifacts/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  publish:
+    needs: [validate, android, ios]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+      RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+    steps:
+      - name: Check out exact release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch this run's platform artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: '*-release'
+          path: ${{ runner.temp }}/release-input
+          merge-multiple: true
+      - name: Validate and assemble release assets
+        run: |
+          python3 app/tool/release.py check-source --tag "$RELEASE_TAG" --commit "$RELEASE_COMMIT"
+          python3 app/tool/release.py assemble --tag "$RELEASE_TAG" --commit "$RELEASE_COMMIT" \
+            --input "$RUNNER_TEMP/release-input" --output "$RUNNER_TEMP/release-output"
+      - name: Publish development pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 app/tool/release.py publish --tag "$RELEASE_TAG" --commit "$RELEASE_COMMIT" \
+            --directory "$RUNNER_TEMP/release-output"

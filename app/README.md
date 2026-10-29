@@ -28,9 +28,9 @@ your team in the Runner project. For Android, install the Android SDK and a Java
 is **18.2**. Native plugins use Flutter's generated **Swift Package Manager**
 integration; no manually maintained Podfile is required.
 
-On this workspace, `xcode-select -p` still points to Command Line Tools. Select
-the full Xcode installation before compiling iOS (this changes the host's active
-developer directory, so run it yourself):
+If `xcode-select -p` points to Command Line Tools, select the full Xcode
+installation before compiling iOS (this changes the host's active developer
+directory, so run it yourself):
 
 ```sh
 sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
@@ -62,10 +62,12 @@ flutter analyze
 
 Kernel compilation checks the Dart application and its imported packages; it does
 **not** compile native plugins, produce an installable app, or validate runtime
-behavior. Full native builds remain unverified on this host: the iOS attempt failed
-when the native-assets hook could not resolve the simulator SDK with Command Line
-Tools selected, and the Android bundle attempt failed because no Android SDK was
-found. Resolve the host prerequisites above before building for devices.
+behavior. Initial native attempts were blocked by Command Line Tools being selected
+for iOS and a missing Android SDK. During release-workflow setup, both unsigned
+native Release builds subsequently succeeded locally. The unsigned IPA packaging
+and APK signing/verification were exercised with a disposable local key, not a
+production key. GitHub-hosted runs still require the settings and signing secrets
+in `RELEASING.md`; no GitHub release was published.
 
 No automated tests, emulator/simulator runs, or hardware checks were performed.
 
@@ -204,6 +206,13 @@ subscriptions and are disposed with the app. The core services are desktop-ready
 in structure, but desktop/web targets and their native setup are **not** included.
 
 ## Distribution
+
+See [RELEASING.md](RELEASING.md) for the tag-triggered GitHub Actions workflow,
+Android signing-secret setup, and the development/release routine. Public tags
+look like `v0.2.0`; the manifest retains an internal build number, e.g. `0.2.0+3`.
+Each GitHub pre-release contains a signed Android APK, an explicitly unsigned
+iOS documentation IPA, source/toolchain metadata, and SHA-256 checksums.
+Normal pushes run checks but do not publish anything.
 
 Android Release builds are unsigned unless private `android/key.properties` is
 provided. That file and keystores are ignored by Git. Its required entries are

@@ -1,0 +1,51 @@
+name: App checks
+
+on:
+  push:
+    branches: [dev, main]
+    paths: ['app/**', '.github/workflows/app-*.yml', 'CHANGELOG.md']
+  pull_request:
+    branches: [main]
+    paths: ['app/**', '.github/workflows/app-*.yml', 'CHANGELOG.md']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: app
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read Flutter SDK pin
+        id: sdk
+        run: |
+          version="$(tr -d '[:space:]' < .flutter-version)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: ${{ steps.sdk.outputs.version }}
+          cache: true
+      - name: Resolve locked dependencies
+        run: flutter pub get --enforce-lockfile
+      - name: Check Dart formatting
+        run: dart format --output=none --set-exit-if-changed lib
+      - name: Analyze application
+        run: flutter analyze --no-pub
+      - name: Check release helper syntax
+        run: python3 -c "import ast, pathlib; ast.parse(pathlib.Path('tool/release.py').read_text())"
