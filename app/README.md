@@ -1,16 +1,15 @@
 # Smart Walker — Flutter
 
-Standalone iOS/Android replacement for the SwiftUI application. The original
-Swift app and all sensor controllers remain in the parent repository unchanged.
+The primary Smart Walker application for iOS and Android, built with Flutter,
+Forui, and universal_ble. Sensor controllers are in `../controller/`. The retired
+SwiftUI implementation is retained in Git history; this app does not depend on
+its source files or Xcode project.
 
 ## Development setup
 
 Use **Flutter 3.47.7**, recorded in `.flutter-version`. The application requires
 Dart 3.13 and Flutter 3.47 or later; its current Forui API is not compatible with
 older Flutter SDKs. Application dependency versions are committed in `pubspec.lock`.
-
-Install this SDK in a persistent location; the temporary SDK used during this
-rewrite is not part of the repository or a required installation path.
 
 From this application directory:
 
@@ -28,9 +27,9 @@ your team in the Runner project. For Android, install the Android SDK and a Java
 is **18.2**. Native plugins use Flutter's generated **Swift Package Manager**
 integration; no manually maintained Podfile is required.
 
-On this workspace, `xcode-select -p` still points to Command Line Tools. Select
-the full Xcode installation before compiling iOS (this changes the host's active
-developer directory, so run it yourself):
+If `xcode-select -p` points to Command Line Tools, select the full Xcode
+installation before compiling iOS. These commands change the host's active
+developer directory and complete Xcode setup:
 
 ```sh
 sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
@@ -41,8 +40,7 @@ xcrun --sdk iphonesimulator --show-sdk-path
 Supplying `DEVELOPER_DIR` to a Flutter command alone is insufficient for the
 current native-assets build hook, which runs with a filtered environment. If
 `objective_c` reports `Bad state: No element` while resolving `sdkPath`, confirm
-that the last command above finds an SDK. No global Xcode selection was changed
-as part of this rewrite.
+that the last command above finds an SDK.
 
 Open this directory in VS Code for Flutter tooling. Launch configuration is in
 `.vscode/launch.json`. Static checks, without running tests:
@@ -52,22 +50,15 @@ dart format --output=none --set-exit-if-changed lib
 flutter analyze
 ```
 
-### Verification performed during the rewrite
+For a development build that can launch independently from an iPhone's Home
+Screen, install in Profile mode:
 
-- Formatting check: all application Dart files are formatted.
-- `flutter analyze --no-pub`: no issues found.
-- Dart kernel compilation (`kernel_snapshot_program`, debug/iOS target): succeeded.
-- iOS property lists and Xcode project syntax: validated with `plutil`.
-- The original SwiftUI application, Xcode project, and controllers are unchanged.
+```sh
+flutter run --profile -d <iphone-device-id>
+```
 
-Kernel compilation checks the Dart application and its imported packages; it does
-**not** compile native plugins, produce an installable app, or validate runtime
-behavior. Full native builds remain unverified on this host: the iOS attempt failed
-when the native-assets hook could not resolve the simulator SDK with Command Line
-Tools selected, and the Android bundle attempt failed because no Android SDK was
-found. Resolve the host prerequisites above before building for devices.
-
-No automated tests, emulator/simulator runs, or hardware checks were performed.
+Profile mode does not provide hot reload, and Apple signing/provisioning limits
+still apply. Use the normal Debug mode for active development with hot reload.
 
 ## Implemented workflows
 
@@ -92,9 +83,10 @@ No automated tests, emulator/simulator runs, or hardware checks were performed.
 | Debug / Profile | `com.xichengyang.Smart-Walker.dev` | `com.xichengyang.smart_walker.dev` |
 | Release | `com.xichengyang.Smart-Walker` | `com.xichengyang.smart_walker` |
 
-Debug/Profile installs can coexist with the original iOS app. Their storage is
-separate: **they do not automatically read the original installation's data**.
-The Release iOS identity preserves the original bundle ID for an in-place update.
+Debug/Profile installs can coexist with a Release installation or the retired
+SwiftUI app. Their storage is separate: **they do not automatically read another
+installation's data**. The Release iOS identity preserves the historical bundle
+ID for an in-place update.
 Do not uninstall the existing app before an update if its local data is needed.
 An archive must use the appropriate signing team and provisioning configuration.
 
@@ -102,19 +94,20 @@ The app reads `smart_walker_data.json` in its application Documents directory.
 For a development migration, copy a **backup** of the old JSON into that exact
 directory for the Flutter installation using Xcode's downloaded app container
 or a simulator container, then relaunch the app. Preserve the original copy.
-There is no in-app file-import workflow or cross-installation migration in this
-first implementation. Android starts with an independent local dataset.
+There is no in-app file-import workflow or cross-installation migration. Android
+starts with an independent local dataset. Removing the old source code from the
+repository neither migrates nor backs up any data held on a device.
 
-Compatibility is **old Swift JSON → Flutter**, not round-trip compatibility:
+Compatibility is **historical Swift JSON → Flutter**, not round-trip compatibility:
 
 - Top-level patient array and existing field names are preserved.
 - UUID comparisons are case-insensitive through normalization.
 - Whole-second and fractional ISO-8601 dates are accepted.
 - The special Unassigned patient retains its fixed all-zero ID.
-- New trial fields are `source`, `completion`, and optional `interruptionReason`.
+- Flutter trial fields include `source`, `completion`, and optional `interruptionReason`.
 - Legacy trials have source `unknown`, not an assumed hardware source.
 - New sample timestamps retain fractional precision.
-- Mean speed/weight and last-minus-first distance summaries match the Swift app.
+- Mean speed/weight and last-minus-first distance summaries preserve the historical calculations.
 
 ## Recording and lifecycle policy
 
@@ -200,8 +193,13 @@ lib/
 ```
 
 Widgets do not call BLE APIs or write storage files. Services own their timers and
-subscriptions and are disposed with the app. The core services are desktop-ready
-in structure, but desktop/web targets and their native setup are **not** included.
+subscriptions and are disposed with the app. Desktop/web targets and their native
+setup are **not** included.
+
+The `ios/` directory, including `Runner.xcodeproj`, `AppDelegate.swift`, and
+`SceneDelegate.swift`, is the Flutter application's native iOS host and must be
+retained. It is separate from the retired SwiftUI application. The `android/`
+directory contains the equivalent Android host, permissions, and build settings.
 
 ## Distribution
 
@@ -211,7 +209,12 @@ provided. That file and keystores are ignored by Git. Its required entries are
 relative to the Android project directory, or may be an absolute path. Do not use
 the development debug signing key for distribution.
 
-The generated native RunnerTests scaffold is not an application test suite. No
-automated tests or BLE hardware validation are included in this first rewrite.
-Verify the app on your own iOS/Android devices before replacing an installation
-containing important data or distributing a build.
+Builds and GitHub releases are managed manually; no GitHub Actions release
+workflow is configured. Keep the Android signing key and its passwords backed up
+outside the repository. An iOS IPA still needs appropriate Apple signing and
+provisioning before it can be installed.
+
+The generated native RunnerTests scaffold is not an application test suite.
+Formatting and static analysis do not validate runtime behavior. Verify changes
+on the target iOS/Android devices before replacing an installation containing
+important data or distributing a build.
