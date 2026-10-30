@@ -5,11 +5,12 @@ import '../../application/trial_recorder.dart';
 import '../../core/formatters.dart';
 import '../../shared/widgets/panels.dart';
 
-/// Dashboard-only controls pinned by FScaffold, outside its scrollable body.
+/// Recording controls pinned by the mobile page or desktop workspace scaffold.
 class TrialRecordingBar extends StatelessWidget {
-  const TrialRecordingBar({required this.recorder, super.key});
+  const TrialRecordingBar({required this.recorder, this.onStarted, super.key});
 
   final TrialRecorder recorder;
+  final VoidCallback? onStarted;
 
   Future<void> _toggle(BuildContext context) async {
     try {
@@ -17,6 +18,7 @@ class TrialRecordingBar extends StatelessWidget {
         await recorder.stop();
       } else {
         await recorder.start();
+        if (context.mounted && recorder.recording) onStarted?.call();
       }
     } catch (exception) {
       if (context.mounted) await showProblem(context, exception);

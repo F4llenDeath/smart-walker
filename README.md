@@ -1,6 +1,6 @@
 # Smart Walker
 
-A mobile app + embedded hardware project for the Spring 2026 UW Madison BME Design [Smart Walker](https://bmedesign.engr.wisc.edu/projects/s26/smart_walker) project. The app connects via BLE to three sensor modules mounted on a walker — two ESP32 load cells (feet) and a Raspberry Pi + TI AWR1843 mmWave radar — to display live weight, distance, and walking speed data. Trials can be recorded per patient and exported as CSV.
+A mobile/desktop app + embedded hardware project for the Spring 2026 UW Madison BME Design [Smart Walker](https://bmedesign.engr.wisc.edu/projects/s26/smart_walker) project. The Flutter app runs on iOS, Android, and macOS and connects via BLE to three sensor modules mounted on a walker — two ESP32 load cells (feet) and a Raspberry Pi + TI AWR1843 mmWave radar — to display live weight, distance, and walking speed data. Trials can be recorded per patient and exported as CSV.
 
 ## Features
 
@@ -25,17 +25,18 @@ A mobile app + embedded hardware project for the Spring 2026 UW Madison BME Desi
 ### Trial History
 - Patient-specific history with duration, distance, average speed, and average weight.
 - Full-trial speed and weight-distribution charts.
-- CSV file export through the platform share sheet on iOS and Android.
+- CSV file export through the platform share interface on iOS, Android, and macOS.
 - Local JSON persistence, previous-save backups, and interrupted-recording recovery.
 
 ## Project Structure
 
 ```
 Smart Walker/
-├── app/                        # Flutter + Forui app (iOS / Android)
+├── app/                        # Flutter + Forui app (iOS / Android / macOS)
 │   ├── lib/                    # UI, models, app services, BLE and persistence
 │   ├── android/                # Android permissions and native host
 │   ├── ios/                    # iOS permissions, signing, and native host
+│   ├── macos/                  # Desktop window, Bluetooth entitlements, native host
 │   ├── pubspec.yaml            # App version and dependencies
 │   └── README.md               # Setup, architecture, and migration notes
 └── controller/

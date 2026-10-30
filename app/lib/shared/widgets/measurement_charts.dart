@@ -4,6 +4,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:forui/forui.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../core/formatters.dart';
 import '../../domain/models/data_point.dart';
 import 'panels.dart';
 
@@ -184,7 +185,24 @@ class _MeasurementChartState extends State<_MeasurementChart> {
                       minY: minY,
                       maxY: maxY,
                       clipData: const FlClipData.all(),
-                      lineTouchData: LineTouchData(enabled: !widget.live),
+                      lineTouchData: LineTouchData(
+                        enabled: !widget.live,
+                        touchTooltipData: LineTouchTooltipData(
+                          fitInsideHorizontally: true,
+                          fitInsideVertically: true,
+                          getTooltipItems: (spots) => [
+                            for (final spot in spots)
+                              LineTooltipItem(
+                                measurement(spot.y),
+                                TextStyle(
+                                  color: colors[spot.barIndex],
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
                       lineBarsData: [
                         for (var index = 0; index < lines.length; index++)
                           LineChartBarData(

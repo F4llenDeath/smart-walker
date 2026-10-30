@@ -1,7 +1,7 @@
 name: smart_walker
-description: Smart Walker telemetry and patient trial recording for iOS and Android.
+description: Smart Walker telemetry and patient trial recording for iOS, Android, and macOS.
 publish_to: 'none'
-version: 0.2.0+3
+version: 0.2.1+4
 
 environment:
   sdk: '>=3.13.0 <4.0.0'

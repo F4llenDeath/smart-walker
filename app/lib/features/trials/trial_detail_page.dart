@@ -12,11 +12,17 @@ class TrialDetailPage extends StatefulWidget {
     required this.dependencies,
     required this.patientId,
     required this.trial,
+    this.onBack,
+    this.headerActions = const [],
+    this.embedded = false,
     super.key,
   });
   final AppDependencies dependencies;
   final String patientId;
   final Trial trial;
+  final VoidCallback? onBack;
+  final List<Widget> headerActions;
+  final bool embedded;
 
   @override
   State<TrialDetailPage> createState() => _TrialDetailPageState();
@@ -25,6 +31,14 @@ class TrialDetailPage extends StatefulWidget {
 class _TrialDetailPageState extends State<TrialDetailPage> {
   bool _busy = false;
   final GlobalKey _shareKey = GlobalKey();
+
+  void _back() {
+    if (widget.onBack != null) {
+      widget.onBack!();
+    } else {
+      Navigator.pop(context);
+    }
+  }
 
   Future<void> _share() async {
     final box = _shareKey.currentContext?.findRenderObject() as RenderBox?;
@@ -55,7 +69,7 @@ class _TrialDetailPageState extends State<TrialDetailPage> {
         widget.patientId,
         widget.trial.id,
       );
-      if (mounted) Navigator.pop(context);
+      if (mounted) _back();
     } catch (exception) {
       if (mounted) await showProblem(context, exception);
     } finally {
@@ -71,132 +85,135 @@ class _TrialDetailPageState extends State<TrialDetailPage> {
     ]),
     builder: (context, _) {
       final trial = widget.trial;
-      return FScaffold(
-        childPad: false,
-        header: FHeader.nested(
-          title: const Text('Trial detail'),
-          prefixes: [FHeaderAction.back(onPress: () => Navigator.pop(context))],
-          suffixes: [
-            FHeaderAction(
-              icon: const Icon(FLucideIcons.trash2),
-              onPress:
-                  _busy ||
-                      widget.dependencies.recorder.locked ||
-                      widget.dependencies.patients.saving
-                  ? null
-                  : _delete,
-            ),
-          ],
-        ),
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1000),
-            child: ListView(
-              padding: const EdgeInsets.all(20),
-              children: [
-                Text(
-                  dateTimeText(trial.startDate),
-                  style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w600,
-                  ),
+      final header = FHeader.nested(
+        title: const Text('Trial detail'),
+        prefixes: [FHeaderAction.back(onPress: _back)],
+        suffixes: [
+          FHeaderAction(
+            icon: const Icon(FLucideIcons.trash2),
+            onPress:
+                _busy ||
+                    widget.dependencies.recorder.locked ||
+                    widget.dependencies.patients.saving
+                ? null
+                : _delete,
+          ),
+          ...widget.headerActions,
+        ],
+      );
+      final content = Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1000),
+          child: ListView(
+            key: PageStorageKey('trial-${widget.patientId}-${trial.id}'),
+            padding: const EdgeInsets.all(20),
+            children: [
+              Text(
+                dateTimeText(trial.startDate),
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w600,
                 ),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    FBadge(
-                      child: Text(
-                        trial.source == DataSource.unknown
-                            ? 'Legacy · source unknown'
-                            : trial.source.name,
-                      ),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FBadge(
+                    child: Text(
+                      trial.source == DataSource.unknown
+                          ? 'Legacy · source unknown'
+                          : trial.source.name,
                     ),
-                    FBadge(child: Text(trial.completion.name)),
-                    FBadge(child: Text('${trial.sampleCount} samples')),
+                  ),
+                  FBadge(child: Text(trial.completion.name)),
+                  FBadge(child: Text('${trial.sampleCount} samples')),
+                ],
+              ),
+              const SizedBox(height: 16),
+              if (trial.interruptionReason != null) ...[
+                NoticeBanner(
+                  'Partial recording',
+                  message: trial.interruptionReason,
+                ),
+                const SizedBox(height: 16),
+              ],
+              SectionCard(
+                title: 'Time',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    DetailRow('Start', timeText(trial.startDate)),
+                    DetailRow(
+                      'End',
+                      trial.endDate == null ? '—' : timeText(trial.endDate!),
+                    ),
+                    DetailRow('Duration', durationText(trial.duration)),
                   ],
                 ),
-                const SizedBox(height: 16),
-                if (trial.interruptionReason != null) ...[
-                  NoticeBanner(
-                    'Partial recording',
-                    message: trial.interruptionReason,
-                  ),
-                  const SizedBox(height: 16),
-                ],
-                SectionCard(
-                  title: 'Time',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      DetailRow('Start', timeText(trial.startDate)),
-                      DetailRow(
-                        'End',
-                        trial.endDate == null ? '—' : timeText(trial.endDate!),
-                      ),
-                      DetailRow('Duration', durationText(trial.duration)),
-                    ],
-                  ),
+              ),
+              const SizedBox(height: 16),
+              SectionCard(
+                title: 'Distance & speed',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    DetailRow(
+                      'Total distance',
+                      '${measurement(trial.totalDistance)} ft',
+                    ),
+                    DetailRow(
+                      'Average speed',
+                      '${measurement(trial.averageSpeed)} ft/s',
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 16),
-                SectionCard(
-                  title: 'Distance & speed',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      DetailRow(
-                        'Total distance',
-                        '${measurement(trial.totalDistance)} ft',
-                      ),
-                      DetailRow(
-                        'Average speed',
-                        '${measurement(trial.averageSpeed)} ft/s',
-                      ),
-                    ],
-                  ),
+              ),
+              const SizedBox(height: 16),
+              SectionCard(
+                title: 'Weight',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    DetailRow(
+                      'Average left',
+                      '${measurement(trial.averageWeightLeft)} lbs',
+                    ),
+                    DetailRow(
+                      'Average right',
+                      '${measurement(trial.averageWeightRight)} lbs',
+                    ),
+                    DetailRow(
+                      'Average total',
+                      '${measurement(trial.averageWeightTotal)} lbs',
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 16),
-                SectionCard(
-                  title: 'Weight',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      DetailRow(
-                        'Average left',
-                        '${measurement(trial.averageWeightLeft)} lbs',
-                      ),
-                      DetailRow(
-                        'Average right',
-                        '${measurement(trial.averageWeightRight)} lbs',
-                      ),
-                      DetailRow(
-                        'Average total',
-                        '${measurement(trial.averageWeightTotal)} lbs',
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                TrialCharts(trial: trial),
-                const SizedBox(height: 20),
-                FButton(
-                  key: _shareKey,
-                  prefix: const Icon(FLucideIcons.share2),
-                  onPress: _busy ? null : _share,
-                  child: Text(_busy ? 'Working…' : 'Export CSV'),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Summaries use the same arithmetic means and last-minus-first distance calculation as the original app.',
-                  style: TextStyle(color: context.theme.colors.mutedForeground),
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 16),
+              TrialCharts(trial: trial),
+              const SizedBox(height: 20),
+              FButton(
+                key: _shareKey,
+                prefix: const Icon(FLucideIcons.share2),
+                onPress: _busy ? null : _share,
+                child: Text(_busy ? 'Working…' : 'Export CSV'),
+              ),
+            ],
           ),
         ),
       );
+      if (widget.embedded) {
+        return Column(
+          children: [
+            header,
+            Expanded(child: content),
+          ],
+        );
+      }
+      return FScaffold(childPad: false, header: header, child: content);
     },
   );
 }

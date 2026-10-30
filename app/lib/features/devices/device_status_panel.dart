@@ -6,8 +6,13 @@ import '../../domain/models/sensor_status.dart';
 import '../../shared/widgets/panels.dart';
 
 class DeviceStatusPanel extends StatefulWidget {
-  const DeviceStatusPanel({required this.dependencies, super.key});
+  const DeviceStatusPanel({
+    required this.dependencies,
+    this.onClose,
+    super.key,
+  });
   final AppDependencies dependencies;
+  final VoidCallback? onClose;
 
   @override
   State<DeviceStatusPanel> createState() => _DeviceStatusPanelState();
@@ -84,7 +89,7 @@ class _DeviceStatusPanelState extends State<DeviceStatusPanel> {
                 ),
                 FButton.icon(
                   variant: FButtonVariant.ghost,
-                  onPress: () => Navigator.pop(context),
+                  onPress: widget.onClose ?? () => Navigator.pop(context),
                   child: const Icon(FLucideIcons.x),
                 ),
               ],

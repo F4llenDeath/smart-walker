@@ -1,6 +1,6 @@
 # Smart Walker — Flutter
 
-The primary Smart Walker application for iOS and Android, built with Flutter,
+The primary Smart Walker application for iOS, Android, and macOS, built with Flutter,
 Forui, and universal_ble. Sensor controllers are in `../controller/`. The retired
 SwiftUI implementation is retained in Git history; this app does not depend on
 its source files or Xcode project.
@@ -76,12 +76,77 @@ still apply. Use the normal Debug mode for active development with hot reload.
 - Exclusive simulation mode, with simulated trials clearly labeled.
 - Local JSON persistence, previous-save backup, and interrupted-trial recovery.
 
+## macOS workspace
+
+On a Mac with full Xcode selected, run from this application directory:
+
+```sh
+flutter pub get --enforce-lockfile
+flutter run -d macos
+```
+
+VS Code includes a **Smart Walker (macOS)** launch configuration. The native
+deployment target is macOS **12.0**. The window starts at 1180 × 820 with a
+900 × 640 minimum content size to keep the sidebar and controls usable.
+
+- **Left sidebar:** a patient dropdown, add/delete actions, and the selected
+  patient's newest-first trial list. Selection uses patient IDs, so duplicate
+  names are distinct. Selection/edit/delete locks match mobile.
+- **Right pane:** defaults to the shared measurements, live charts, simulation notice,
+  storage errors, and recording recovery controls. The patient selector and history
+  are not duplicated in the content pane.
+- **Connection status:** the top-right button opens an anchored, opaque Forui
+  popover with sensor checks, Retry, and simulation mode. Clicking outside or
+  pressing Escape closes it without navigating away from the content pane.
+- **Trial details:** open only in the right pane. Back returns to live recording;
+  choosing another trial replaces the displayed detail rather than stacking many
+  pages. Changing patient or deleting the selected trial returns to live content.
+- **Recording controls:** remain pinned to the right pane, including on a trial
+  detail. Starting a trial returns to live content. Browsing old trials does not
+  stop an active trial. A save failure returns to live content with Retry visible.
+
+macOS uses Forui desktop light/dark variants. Mobile keeps its touch styling,
+patient sheets, history navigation, and dashboard layout. The recording, JSON,
+BLE protocol, and CSV-sharing services remain shared. No import, Save As, or cloud
+synchronization feature was added.
+
+The sandbox remains enabled. Bluetooth usage descriptions and
+`com.apple.security.device.bluetooth` are configured for development and Release.
+If access is denied, allow Smart Walker in **System Settings → Privacy & Security
+→ Bluetooth** and retry. Three-device BLE and CSV sharing require your own runtime
+validation on the Mac; compilation does not validate either workflow.
+
+Losing focus to another application alone does not stop a trial. Hiding or
+minimizing the window stops and preserves the partial trial. Normal Quit and the
+window close button request a save first; failed trial saves cancel exit so the
+window stays available for Retry. Force quit, sleep, power loss, and abrupt
+termination are not continuous-recording guarantees. Recovery relies on the
+existing two-second checkpoints. Each normal-exit save wait is bounded to
+20 seconds; a timeout cancels the exit request.
+
+Mac data is stored in its own sandbox and is not automatically shared with iOS
+or Android. Development and Release Mac builds use the same Mac identity and
+local data; back up important trials before replacing builds.
+
+Build an optimized local application with:
+
+```sh
+flutter build macos --release
+```
+
+Output: `build/macos/Build/Products/Release/Smart Walker.app`. These local builds
+are not notarized public distributions. Developer ID signing, notarization, and
+`.pkg`/`.dmg` packaging are separate steps and are not configured here.
+
 ## App identities and existing iOS data
 
 | Build | iOS bundle ID | Android application ID |
 | --- | --- | --- |
 | Debug / Profile | `com.xichengyang.Smart-Walker.dev` | `com.xichengyang.smart_walker.dev` |
 | Release | `com.xichengyang.Smart-Walker` | `com.xichengyang.smart_walker` |
+
+The macOS application uses `com.xichengyang.Smart-Walker.mac` for development and
+Release, with a dataset separate from either mobile installation.
 
 Debug/Profile installs can coexist with a Release installation or the retired
 SwiftUI app. Their storage is separate: **they do not automatically read another
@@ -188,18 +253,21 @@ lib/
   core/           BLE constants/parsing and display formatters
   data/           BLE transport, JSON/draft repositories, CSV sharing
   domain/models/  Immutable patient/trial/sample models and compatibility codecs
-  features/       Dashboard, patients, devices, trial detail/charts
+  features/       Shared dashboard, desktop workspace, patients, devices, trials
   shared/widgets/ Forui cards, notices, dialogs, adaptive sheets
 ```
 
 Widgets do not call BLE APIs or write storage files. Services own their timers and
-subscriptions and are disposed with the app. Desktop/web targets and their native
-setup are **not** included.
+subscriptions and are disposed with the app. The macOS workspace shares these
+services and uses a content-pane navigator. Windows, Linux, and web targets are
+not included.
 
 The `ios/` directory, including `Runner.xcodeproj`, `AppDelegate.swift`, and
 `SceneDelegate.swift`, is the Flutter application's native iOS host and must be
 retained. It is separate from the retired SwiftUI application. The `android/`
 directory contains the equivalent Android host, permissions, and build settings.
+The `macos/` directory contains the desktop host, window configuration, Bluetooth
+entitlements, and generated Swift Package Manager integration.
 
 ## Distribution
 
@@ -216,5 +284,5 @@ provisioning before it can be installed.
 
 The generated native RunnerTests scaffold is not an application test suite.
 Formatting and static analysis do not validate runtime behavior. Verify changes
-on the target iOS/Android devices before replacing an installation containing
+on the target iOS/Android devices and Mac before replacing an installation containing
 important data or distributing a build.

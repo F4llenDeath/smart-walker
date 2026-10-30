@@ -4,8 +4,10 @@ import 'package:forui/forui.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../features/dashboard/dashboard_page.dart';
+import '../features/desktop/desktop_workspace.dart';
 import 'app_dependencies.dart';
 import 'app_lifecycle_controller.dart';
+import 'app_platform.dart';
 
 class SmartWalkerApp extends StatefulWidget {
   const SmartWalkerApp({required this.dependencies, super.key});
@@ -35,16 +37,16 @@ class _SmartWalkerAppState extends State<SmartWalkerApp> {
     debugShowCheckedModeBanner: false,
     localizationsDelegates: FLocalizations.localizationsDelegates,
     supportedLocales: FLocalizations.supportedLocales,
-    theme: FTheme.neutral.light.touch.toApproximateMaterialTheme(),
-    darkTheme: FTheme.neutral.dark.touch.toApproximateMaterialTheme(),
+    theme: appTheme(dark: false).toApproximateMaterialTheme(),
+    darkTheme: appTheme(dark: true).toApproximateMaterialTheme(),
     themeMode: ThemeMode.system,
     builder: (context, child) => FTheme(
-      data: Theme.of(context).brightness == Brightness.dark
-          ? FTheme.neutral.dark.touch
-          : FTheme.neutral.light.touch,
+      data: appTheme(dark: Theme.of(context).brightness == Brightness.dark),
       child: FToaster(child: FTooltipGroup(child: child!)),
     ),
-    home: DashboardPage(dependencies: widget.dependencies),
+    home: isMacOSApp
+        ? DesktopWorkspace(dependencies: widget.dependencies)
+        : DashboardPage(dependencies: widget.dependencies),
   );
 
   @override

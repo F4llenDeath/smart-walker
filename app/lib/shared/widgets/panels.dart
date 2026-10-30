@@ -65,6 +65,7 @@ Future<bool> confirmAction(
 }) async =>
     await showFDialog<bool>(
       context: context,
+      useRootNavigator: true,
       builder: (context, style, animation) => FDialog(
         style: style,
         animation: animation,
@@ -106,6 +107,7 @@ Future<bool> confirmAction(
 Future<void> showProblem(BuildContext context, Object exception) =>
     showFDialog<void>(
       context: context,
+      useRootNavigator: true,
       builder: (context, style, animation) => FDialog(
         style: style,
         animation: animation,

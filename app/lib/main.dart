@@ -2,6 +2,7 @@ import 'package:forui/forui.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'app/app_dependencies.dart';
+import 'app/app_platform.dart';
 import 'app/smart_walker_app.dart';
 
 void main() {
@@ -27,7 +28,7 @@ class _BootstrapState extends State<_Bootstrap> {
       return MaterialApp(
         debugShowCheckedModeBanner: false,
         builder: (context, child) =>
-            FTheme(data: FTheme.neutral.light.touch, child: child!),
+            FTheme(data: appTheme(dark: false), child: child!),
         home: FScaffold(
           child: Center(
             child: Padding(
