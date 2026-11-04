@@ -44,7 +44,7 @@ class _SmartWalkerAppState extends State<SmartWalkerApp> {
       data: appTheme(dark: Theme.of(context).brightness == Brightness.dark),
       child: FToaster(child: FTooltipGroup(child: child!)),
     ),
-    home: isMacOSApp
+    home: isDesktopApp
         ? DesktopWorkspace(dependencies: widget.dependencies)
         : DashboardPage(dependencies: widget.dependencies),
   );

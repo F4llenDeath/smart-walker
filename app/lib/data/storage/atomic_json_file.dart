@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'replace_file.dart';
+
 /// Serializes writes and replaces a file only after its new contents are flushed.
 class AtomicJsonFile {
   AtomicJsonFile(this.file);
@@ -26,9 +28,9 @@ class AtomicJsonFile {
         if (backup && await file.exists()) {
           final backupTemporary = File('${file.path}.bak.tmp');
           await file.copy(backupTemporary.path);
-          await backupTemporary.rename('${file.path}.bak');
+          await replaceFile(backupTemporary, '${file.path}.bak');
         }
-        await temporary.rename(file.path);
+        await replaceFile(temporary, file.path);
       });
 
   Future<void> delete() => serialize(() async {

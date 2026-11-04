@@ -2,6 +2,7 @@ import 'package:forui/forui.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../app/app_dependencies.dart';
+import '../../app/app_platform.dart';
 import '../../core/formatters.dart';
 import '../../domain/models/trial.dart';
 import '../../shared/widgets/panels.dart';
@@ -41,12 +42,25 @@ class _TrialDetailPageState extends State<TrialDetailPage> {
   }
 
   Future<void> _share() async {
-    final box = _shareKey.currentContext?.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize) return;
-    final origin = box.localToGlobal(Offset.zero) & box.size;
+    Rect? origin;
+    if (!isWindowsApp) {
+      final box = _shareKey.currentContext?.findRenderObject() as RenderBox?;
+      if (box == null || !box.hasSize) return;
+      origin = box.localToGlobal(Offset.zero) & box.size;
+    }
     setState(() => _busy = true);
     try {
-      await widget.dependencies.csv.share(widget.trial, origin);
+      final path = await widget.dependencies.csv.export(
+        widget.trial,
+        origin: origin,
+      );
+      if (mounted && path != null) {
+        showFToast(
+          context: context,
+          title: const Text('CSV saved'),
+          description: Text(path),
+        );
+      }
     } catch (exception) {
       if (mounted) await showProblem(context, exception);
     } finally {
@@ -197,7 +211,9 @@ class _TrialDetailPageState extends State<TrialDetailPage> {
               const SizedBox(height: 20),
               FButton(
                 key: _shareKey,
-                prefix: const Icon(FLucideIcons.share2),
+                prefix: Icon(
+                  isWindowsApp ? FLucideIcons.download : FLucideIcons.share2,
+                ),
                 onPress: _busy ? null : _share,
                 child: Text(_busy ? 'Working…' : 'Export CSV'),
               ),

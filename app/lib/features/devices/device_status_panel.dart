@@ -2,6 +2,7 @@ import 'package:forui/forui.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../app/app_dependencies.dart';
+import '../../app/app_platform.dart';
 import '../../domain/models/sensor_status.dart';
 import '../../shared/widgets/panels.dart';
 
@@ -64,13 +65,19 @@ class _DeviceStatusPanelState extends State<DeviceStatusPanel> {
           : switch (devices.adapter) {
               AdapterState.off => 'Enable Bluetooth in Settings.',
               AdapterState.unauthorized =>
-                'Allow Bluetooth access in Settings, then retry.',
+                isWindowsApp
+                    ? 'Bluetooth access is blocked. Contact your clinic IT administrator, then retry.'
+                    : 'Allow Bluetooth access in Settings, then retry.',
               AdapterState.unsupported =>
-                'Bluetooth is not supported on this device.',
+                isWindowsApp
+                    ? 'No compatible Bluetooth LE adapter is available. Check the adapter and its Windows driver.'
+                    : 'Bluetooth is not supported on this device.',
               _ when devices.error != null && !devices.hasPermissions =>
                 'Allow Bluetooth access in Settings, then retry.',
               _ when devices.error != null =>
-                'Unable to connect. Please retry.',
+                isWindowsApp
+                    ? 'Unable to connect. Check that the walker is powered on, Bluetooth is enabled, and clinic policy allows Bluetooth devices; then retry.'
+                    : 'Unable to connect. Please retry.',
               _ => null,
             };
       return SingleChildScrollView(

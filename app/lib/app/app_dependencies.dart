@@ -1,5 +1,3 @@
-import 'package:path_provider/path_provider.dart';
-
 import '../application/device_coordinator.dart';
 import '../application/patient_controller.dart';
 import '../application/simulation_source.dart';
@@ -7,6 +5,7 @@ import '../application/telemetry_controller.dart';
 import '../application/trial_recorder.dart';
 import '../data/ble/universal_ble_transport.dart';
 import '../data/export/csv_export_service.dart';
+import '../data/storage/app_storage_directory.dart';
 import '../data/storage/json_patient_repository.dart';
 import '../data/storage/recording_draft_store.dart';
 
@@ -27,7 +26,7 @@ class AppDependencies {
   final CsvExportService csv = CsvExportService();
 
   static Future<AppDependencies> create() async {
-    final directory = await getApplicationDocumentsDirectory();
+    final directory = await appStorageDirectory();
     final patients = PatientController(JsonPatientRepository(directory));
     await patients.initialize();
     final devices = DeviceCoordinator(UniversalBleTransport());

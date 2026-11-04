@@ -5,7 +5,7 @@
 
 version:
   revision: "abaf9c523780a608bd46686fd5e53740a07077f8"
-  channel: "[user-branch]"
+  channel: "stable"
 
 project_type: app
 
@@ -21,8 +21,10 @@ migration:
     - platform: ios
       create_revision: abaf9c523780a608bd46686fd5e53740a07077f8
       base_revision: abaf9c523780a608bd46686fd5e53740a07077f8
-
     - platform: macos
+      create_revision: abaf9c523780a608bd46686fd5e53740a07077f8
+      base_revision: abaf9c523780a608bd46686fd5e53740a07077f8
+    - platform: windows
       create_revision: abaf9c523780a608bd46686fd5e53740a07077f8
       base_revision: abaf9c523780a608bd46686fd5e53740a07077f8
 

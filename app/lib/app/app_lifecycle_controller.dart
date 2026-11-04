@@ -69,7 +69,7 @@ class AppLifecycleController with WidgetsBindingObserver {
 
   @override
   Future<AppExitResponse> didRequestAppExit() async {
-    if (!isMacOSApp || _disposed) return AppExitResponse.exit;
+    if (!isDesktopApp || _disposed) return AppExitResponse.exit;
     if (_exiting) return AppExitResponse.cancel;
     _exiting = true;
     _generation++;
