@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../app/app_dependencies.dart';
 import '../../app/app_platform.dart';
+import '../../domain/models/battery_status.dart';
 import '../../domain/models/sensor_status.dart';
 import '../../shared/widgets/panels.dart';
 
@@ -172,26 +173,96 @@ class _DeviceStatusPanelState extends State<DeviceStatusPanel> {
     SensorRole role,
     bool ready, {
     required bool simulated,
-  }) => FTile.raw(
-    child: Semantics(
-      container: true,
-      label: role.label,
-      value: ready ? (simulated ? 'Ready, simulated' : 'Ready') : 'Not ready',
-      excludeSemantics: true,
-      child: Row(
-        children: [
-          Expanded(child: Text(role.label)),
-          Icon(
-            ready ? FLucideIcons.check : FLucideIcons.x,
-            size: 20,
-            color: ready
-                ? (context.theme.colors.brightness == Brightness.dark
-                      ? Colors.green.shade400
-                      : Colors.green.shade700)
-                : context.theme.colors.destructive,
-          ),
-        ],
+  }) {
+    final telemetry = widget.dependencies.telemetry;
+    final battery = widget.dependencies.devices.sensors[role]!.battery;
+    final showBattery = role != SensorRole.radar && !simulated;
+    final level = ready && telemetry.foreground && !telemetry.switching
+        ? battery.level
+        : BatteryLevel.unknown;
+    final batteryLabel = level != BatteryLevel.unknown
+        ? switch (level) {
+            BatteryLevel.high => 'Battery high (approximate)',
+            BatteryLevel.medium => 'Battery medium (approximate)',
+            BatteryLevel.low => 'Battery low — recharge soon (approximate)',
+            BatteryLevel.unknown => 'Battery unknown',
+          }
+        : !ready || !telemetry.foreground || telemetry.switching
+        ? 'Battery unknown — sensor not ready'
+        : switch (battery.availability) {
+            BatteryAvailability.waiting => 'Reading battery…',
+            BatteryAvailability.unsupported => 'Battery reporting unsupported',
+            BatteryAvailability.stale => 'Battery reading stale',
+            _ => 'Battery unavailable',
+          };
+    final readiness = ready
+        ? (simulated ? 'Ready, simulated' : 'Ready')
+        : 'Not ready';
+    return FTile.raw(
+      child: Semantics(
+        container: true,
+        label: role.label,
+        value: showBattery ? '$readiness, $batteryLabel' : readiness,
+        excludeSemantics: true,
+        child: Row(
+          children: [
+            Expanded(child: Text(role.label)),
+            if (showBattery) ...[
+              FTooltip(
+                tipBuilder: (context, controller) => Text(batteryLabel),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  child: SizedBox(
+                    width: 28,
+                    height: 24,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Icon(
+                          switch (level) {
+                            BatteryLevel.high => FLucideIcons.batteryFull,
+                            BatteryLevel.medium => FLucideIcons.batteryMedium,
+                            BatteryLevel.low => FLucideIcons.batteryLow,
+                            BatteryLevel.unknown => FLucideIcons.battery,
+                          },
+                          size: 24,
+                          color: level == BatteryLevel.low
+                              ? context.theme.colors.destructive
+                              : level == BatteryLevel.unknown
+                              ? context.theme.colors.mutedForeground
+                              : context.theme.colors.foreground,
+                        ),
+                        if (level == BatteryLevel.unknown)
+                          Text(
+                            '?',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: context.theme.colors.mutedForeground,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+            ],
+            Icon(
+              ready ? FLucideIcons.check : FLucideIcons.x,
+              size: 20,
+              color: ready
+                  ? (context.theme.colors.brightness == Brightness.dark
+                        ? Colors.green.shade400
+                        : Colors.green.shade700)
+                  : context.theme.colors.destructive,
+            ),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 }

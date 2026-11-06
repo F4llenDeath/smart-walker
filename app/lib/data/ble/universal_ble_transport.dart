@@ -36,6 +36,12 @@ class UniversalBleTransport implements BleTransport {
         BleProtocol.characteristicUuid,
       );
   @override
+  Stream<List<int>> batteryNotifications(String id) =>
+      UniversalBle.characteristicValueStream(
+        id,
+        BleProtocol.batteryCharacteristicUuid,
+      );
+  @override
   Future<AdapterState> availability() async =>
       _map(await UniversalBle.getBluetoothAvailabilityState());
   @override
@@ -62,7 +68,7 @@ class UniversalBleTransport implements BleTransport {
     autoConnect: false,
   );
   @override
-  Future<void> discover(String id) async {
+  Future<SensorCapabilities> discover(String id) async {
     final services = await UniversalBle.discoverServices(id);
     final compatible = services.any(
       (service) =>
@@ -81,6 +87,24 @@ class UniversalBleTransport implements BleTransport {
         'Required notifying telemetry characteristic not found.',
       );
     }
+    return SensorCapabilities(
+      battery: services.any(
+        (service) =>
+            service.uuid.toLowerCase() ==
+                BleProtocol.serviceUuid.toLowerCase() &&
+            service.characteristics.any(
+              (characteristic) =>
+                  characteristic.uuid.toLowerCase() ==
+                      BleProtocol.batteryCharacteristicUuid.toLowerCase() &&
+                  characteristic.properties.contains(
+                    CharacteristicProperty.read,
+                  ) &&
+                  characteristic.properties.contains(
+                    CharacteristicProperty.notify,
+                  ),
+            ),
+      ),
+    );
   }
 
   @override
@@ -88,6 +112,21 @@ class UniversalBleTransport implements BleTransport {
     id,
     BleProtocol.serviceUuid,
     BleProtocol.characteristicUuid,
+  );
+  @override
+  Future<void> subscribeBattery(String id) =>
+      UniversalBle.subscribeNotifications(
+        id,
+        BleProtocol.serviceUuid,
+        BleProtocol.batteryCharacteristicUuid,
+        timeout: const Duration(seconds: 2),
+      );
+  @override
+  Future<List<int>> readBattery(String id) => UniversalBle.read(
+    id,
+    BleProtocol.serviceUuid,
+    BleProtocol.batteryCharacteristicUuid,
+    timeout: const Duration(seconds: 2),
   );
   @override
   Future<void> disconnect(String id) =>

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import '../core/ble_protocol.dart';
 import '../data/ble/ble_transport.dart';
+import '../domain/models/battery_status.dart';
 import '../domain/models/sensor_status.dart';
 
 class DeviceCoordinator extends ChangeNotifier {
@@ -205,7 +206,7 @@ class DeviceCoordinator extends ChangeNotifier {
       if (!current()) return;
       status.phase = SensorPhase.discovering;
       notifyListeners();
-      await transport.discover(device.id);
+      final capabilities = await transport.discover(device.id);
       if (!current()) return;
       status.phase = SensorPhase.subscribing;
       notifyListeners();
@@ -239,6 +240,14 @@ class DeviceCoordinator extends ChangeNotifier {
       if (status.phase != SensorPhase.ready) status.phase = SensorPhase.waiting;
       status.waitingSinceMilliseconds = _clock.elapsedMilliseconds;
       notifyListeners();
+      if (role != SensorRole.radar) {
+        if (capabilities.battery) {
+          await _setupBattery(role, device.id, current);
+        } else {
+          status.battery.reset(BatteryAvailability.unsupported);
+          notifyListeners();
+        }
+      }
     } catch (exception) {
       if (current()) {
         await _failed(role, generation, 'Connection failed: $exception');
@@ -250,6 +259,63 @@ class DeviceCoordinator extends ChangeNotifier {
       if (!current()) {
         await _cancelListeners(role);
         await _safeDisconnect(device.id);
+      }
+    }
+  }
+
+  Future<void> _setupBattery(
+    SensorRole role,
+    String id,
+    bool Function() current,
+  ) async {
+    final battery = sensors[role]!.battery;
+    var events = 0;
+    void received(List<int> bytes) {
+      if (!current()) return;
+      events++;
+      battery.receive(
+        BleProtocol.parseBattery(bytes),
+        _clock.elapsedMilliseconds,
+      );
+      notifyListeners();
+    }
+
+    // Optional GATT failures must never enter the required-stream recovery path.
+    try {
+      _sessions[role]!.add(
+        transport
+            .batteryNotifications(id)
+            .listen(
+              received,
+              onError: (Object exception) {
+                if (!current()) return;
+                events++;
+                battery.reset(BatteryAvailability.unavailable);
+                notifyListeners();
+              },
+            ),
+      );
+      try {
+        await transport.subscribeBattery(id);
+      } catch (_) {
+        // Still attempt an initial read if notifications could not be enabled.
+      }
+      if (!current()) return;
+      final beforeRead = events;
+      try {
+        final bytes = await transport.readBattery(id);
+        // A delayed read must not overwrite a newer notification or error.
+        if (current() && events == beforeRead) received(bytes);
+      } catch (_) {
+        if (current() && events == 0) {
+          battery.reset(BatteryAvailability.unavailable);
+          notifyListeners();
+        }
+      }
+    } catch (_) {
+      if (current()) {
+        battery.reset(BatteryAvailability.unavailable);
+        notifyListeners();
       }
     }
   }
@@ -314,6 +380,7 @@ class DeviceCoordinator extends ChangeNotifier {
     if (!_active || _disposed) return;
     bool changed = false;
     for (final status in sensors.values) {
+      if (status.battery.expire(_clock.elapsedMilliseconds)) changed = true;
       final receipt = status.lastReceiptMilliseconds;
       if (status.phase == SensorPhase.ready &&
           receipt != null &&
@@ -437,6 +504,7 @@ class DeviceCoordinator extends ChangeNotifier {
     _scanRetry?.cancel();
     for (final status in sensors.values) {
       status.phase = SensorPhase.disconnected;
+      status.battery.reset(BatteryAvailability.unavailable);
     }
     notifyListeners();
     return _serialize(() async {

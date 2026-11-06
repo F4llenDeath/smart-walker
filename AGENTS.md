@@ -10,10 +10,11 @@ Host setup commands and runtime data paths are identified separately.
 
 Smart Walker combines a Flutter application in `app/` with sensor controllers in
 `controller/`. The application targets iOS, Android, macOS, and Windows x64 using
-Forui, `fl_chart`, and `universal_ble`. It connects to two ESP32 load-cell modules
-and a Raspberry Pi + TI AWR1843 radar to record patient walking trials. The retired
-SwiftUI application is retained in Git history; the Flutter application does not
-depend on its old source or Xcode project. Linux and web targets are not included.
+Forui, `fl_chart`, and `universal_ble`. It connects to two Seeed Studio XIAO ESP32-C5
+load-cell modules and a Raspberry Pi + TI AWR1843 radar to record patient walking
+trials. The retired SwiftUI application is retained in Git history; the Flutter
+application does not depend on its old source or Xcode project. Linux and web
+targets are not included.
 
 Preserve these workflows:
 
@@ -168,6 +169,19 @@ controller/
 
 ### Sensor controller guidance
 
+- Both foot modules now use **Seeed Studio XIAO ESP32-C5** boards, replacing the
+  previous XIAO ESP32-S3 boards. Each board is powered by its own **3.7 V nominal,
+  2200 mAh lithium-ion cylindrical battery**
+  ([Adafruit product 1781](https://www.adafruit.com/product/1781)). Only the
+  Raspberry Pi and TI AWR1843 radar are powered by a separate power bank.
+- The XIAO ESP32-C5 supports onboard battery-voltage measurement; see the
+  [official Seeed guide](https://wiki.seeedstudio.com/xiao_esp32c5_getting_started/).
+  The foot firmware enables GPIO26 and averages 16 calibrated GPIO6 millivolt
+  readings, multiplied by two for the divider. It samples every second, smooths
+  valid readings, and exposes optional battery telemetry separately from weight.
+  The shared Flutter connection panel shows High/Medium/Low battery icons, not
+  voltage or percentage; these are approximate voltage bands, not a fuel gauge
+  or confirmation of charging/full charge. The radar/Pi power bank is not monitored.
 - `controller/swLeftFoot.ino` and `controller/swRightFoot.ino` use the existing
   ESP32 Arduino BLE libraries and HX711 load-cell interface. Preserve the device
   names, UUIDs, notification format, and nominal 200 ms send interval shared with
@@ -302,6 +316,39 @@ Preserve the existing controller protocol:
 Service:        A7E8F0B1-3C54-4D92-9F3E-0A1B2C3D4E5F
 Characteristic: B8F9E1C2-4D65-5EA3-A04F-1B2C3D4E5F60
 ```
+
+### Optional foot battery status
+
+Both feet add Read + Notify characteristic
+`C9A0F2D3-5E76-4FB4-B150-2C3D4E5F6071` under the existing service. Advertising,
+device names, and weight/radar packets remain unchanged. Battery payload is four
+bytes: protocol version `1`, validity `0`/`1`, then unsigned 16-bit little-endian
+millivolts (zero when invalid). Values outside **2500–4500 mV** are rejected;
+these are plausibility bounds, not recommended operating/cutoff voltages.
+
+- Firmware updates the readable value every **one second**, notifies every
+  **ten seconds** even when unchanged, and also notifies on validity transitions.
+  No new blocking delays are added. Serial output retains voltage for diagnostics.
+- The app establishes required telemetry first, then attaches battery listeners,
+  subscribes and reads with bounded optional operations. Missing support on older
+  firmware, invalid packets, or battery-operation failures do not fail the sensor
+  connection or change recording readiness. Battery packets never refresh weight
+  freshness. Battery readings expire after **45 seconds** without a valid update.
+- Icons are High at **3900 mV or above**, Low at **3600 mV or below**, otherwise
+  Medium on first receipt. Hysteresis retains High down to **3800 mV** and Low
+  until **3700 mV**. These thresholds are **provisional and not hardware-validated**;
+  compare both modules against a multimeter and characterize normal loaded
+  discharge before relying on the Low warning. No remaining-runtime claim is made.
+- Missing, invalid, stale, or disconnected readings show Unknown, never a
+  fabricated charge level. Tooltips/accessibility describe the status. Simulation
+  hides real battery indicators. Low is nonblocking and never stops a trial by
+  itself. No battery values are added to patient JSON, trial samples, or CSV.
+- Compile each `.ino` as a **separate Arduino sketch**, with a matching sketch
+  directory name, using the XIAO ESP32-C5 board and the installed HX711 library.
+  Do not compile both `.ino` files together from `controller/` or change load-cell
+  pin assignments/calibration as part of battery validation.
+
+### Required telemetry and troubleshooting
 
 `UniversalBleTransport` is the only application layer importing `universal_ble`.
 Roles use advertised names; route packets by device ID and characteristic. Require

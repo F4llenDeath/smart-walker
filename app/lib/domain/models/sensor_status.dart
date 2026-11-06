@@ -1,3 +1,5 @@
+import 'battery_status.dart';
+
 enum SensorRole {
   leftFoot('SW-LeftFoot', 'Left foot'),
   rightFoot('SW-RightFoot', 'Right foot'),
@@ -36,6 +38,7 @@ class SensorStatus {
   SensorStatus(this.role);
 
   final SensorRole role;
+  final BatteryStatus battery = BatteryStatus();
   SensorPhase phase = SensorPhase.disconnected;
   String? deviceId;
   String? error;
@@ -46,6 +49,7 @@ class SensorStatus {
   double? speed;
 
   void clear() {
+    battery.reset();
     phase = SensorPhase.disconnected;
     deviceId = null;
     error = null;
