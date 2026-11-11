@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../core/formatters.dart';
 import '../../domain/models/data_point.dart';
+import '../../domain/models/sensor_status.dart';
 import 'panels.dart';
 
 /// Shared presentation for a saved trial or a bounded live recording window.
@@ -14,6 +15,7 @@ class MeasurementCharts extends StatelessWidget {
   const MeasurementCharts({
     required this.startDate,
     required this.samples,
+    required this.sensors,
     this.minSeconds = 0,
     this.maxSeconds,
     this.live = false,
@@ -25,6 +27,7 @@ class MeasurementCharts extends StatelessWidget {
 
   final DateTime startDate;
   final List<DataPoint> samples;
+  final Set<SensorRole> sensors;
   final double minSeconds;
   final double? maxSeconds;
   final bool live;
@@ -52,25 +55,33 @@ class MeasurementCharts extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _MeasurementChart(
-          startDate: startDate,
-          samples: points,
-          weights: false,
-          minSeconds: minSeconds,
-          maxSeconds: right,
-          live: live,
-          height: chartHeight,
-        ),
-        const SizedBox(height: 16),
-        _MeasurementChart(
-          startDate: startDate,
-          samples: points,
-          weights: true,
-          minSeconds: minSeconds,
-          maxSeconds: right,
-          live: live,
-          height: chartHeight,
-        ),
+        if (sensors.contains(SensorRole.radar))
+          _MeasurementChart(
+            startDate: startDate,
+            samples: points,
+            weights: false,
+            sensors: sensors,
+            minSeconds: minSeconds,
+            maxSeconds: right,
+            live: live,
+            height: chartHeight,
+          ),
+        if (sensors.contains(SensorRole.radar) &&
+            (sensors.contains(SensorRole.leftFoot) ||
+                sensors.contains(SensorRole.rightFoot)))
+          const SizedBox(height: 16),
+        if (sensors.contains(SensorRole.leftFoot) ||
+            sensors.contains(SensorRole.rightFoot))
+          _MeasurementChart(
+            startDate: startDate,
+            samples: points,
+            weights: true,
+            sensors: sensors,
+            minSeconds: minSeconds,
+            maxSeconds: right,
+            live: live,
+            height: chartHeight,
+          ),
       ],
     );
   }
@@ -81,6 +92,7 @@ class _MeasurementChart extends StatefulWidget {
     required this.startDate,
     required this.samples,
     required this.weights,
+    required this.sensors,
     required this.minSeconds,
     required this.maxSeconds,
     required this.live,
@@ -90,6 +102,7 @@ class _MeasurementChart extends StatefulWidget {
   final DateTime startDate;
   final List<DataPoint> samples;
   final bool weights;
+  final Set<SensorRole> sensors;
   final double minSeconds;
   final double maxSeconds;
   final bool live;
@@ -121,21 +134,30 @@ class _MeasurementChartState extends State<_MeasurementChart> {
 
   @override
   Widget build(BuildContext context) {
-    final lines = widget.weights
-        ? [
-            widget.samples
-                .map((point) => FlSpot(_seconds(point), point.weightLeft))
-                .toList(),
-            widget.samples
-                .map((point) => FlSpot(_seconds(point), point.weightRight))
-                .toList(),
-          ]
-        : [
-            widget.samples
-                .map((point) => FlSpot(_seconds(point), point.speedFtS))
-                .toList(),
-          ];
-    final values = lines.expand((line) => line.map((spot) => spot.y)).toList();
+    final series = <(String, Color, double? Function(DataPoint))>[
+      if (widget.weights) ...[
+        if (widget.sensors.contains(SensorRole.leftFoot))
+          ('Left', const Color(0xFF3B82F6), (point) => point.weightLeft),
+        if (widget.sensors.contains(SensorRole.rightFoot))
+          ('Right', const Color(0xFFF97316), (point) => point.weightRight),
+      ] else
+        ('Speed', const Color(0xFF3B82F6), (point) => point.speedFtS),
+    ];
+    final lines = [
+      for (final (_, _, value) in series)
+        widget.samples.map((point) {
+          final measurement = value(point);
+          return measurement == null
+              ? FlSpot.nullSpot
+              : FlSpot(_seconds(point), measurement);
+        }).toList(),
+    ];
+    final values = lines
+        .expand(
+          (line) =>
+              line.where((spot) => spot.isNotNull()).map((spot) => spot.y),
+        )
+        .toList();
     final lowest = values.fold<double>(0, min);
     final highest = values.fold<double>(0, max);
     final padding = max(1.0, (highest - lowest) * 0.12);
@@ -157,7 +179,6 @@ class _MeasurementChartState extends State<_MeasurementChart> {
     }
 
     final span = widget.maxSeconds - widget.minSeconds;
-    final colors = [const Color(0xFF3B82F6), const Color(0xFFF97316)];
     final textColor = context.theme.colors.mutedForeground;
     final axisStyle = TextStyle(fontSize: 11, color: textColor);
     final visibleCount = widget.samples
@@ -170,7 +191,9 @@ class _MeasurementChartState extends State<_MeasurementChart> {
 
     return SectionCard(
       title: widget.weights ? 'Weight distribution' : 'Walking speed',
-      subtitle: widget.weights ? 'Left (blue) · Right (orange) · lbs' : 'ft/s',
+      subtitle: widget.weights
+          ? '${series.map((line) => '${line.$1} (${line.$1 == 'Left' ? 'blue' : 'orange'})').join(' · ')} · lbs'
+          : 'ft/s',
       child: Column(
         children: [
           SizedBox(
@@ -195,7 +218,7 @@ class _MeasurementChartState extends State<_MeasurementChart> {
                               LineTooltipItem(
                                 measurement(spot.y),
                                 TextStyle(
-                                  color: colors[spot.barIndex],
+                                  color: series[spot.barIndex].$2,
                                   fontWeight: FontWeight.bold,
                                   fontSize: 14,
                                 ),
@@ -207,7 +230,7 @@ class _MeasurementChartState extends State<_MeasurementChart> {
                         for (var index = 0; index < lines.length; index++)
                           LineChartBarData(
                             spots: lines[index],
-                            color: colors[index],
+                            color: series[index].$2,
                             barWidth: 2,
                             isCurved: false,
                             dotData: FlDotData(show: visibleCount == 1),
@@ -265,10 +288,12 @@ class _MeasurementChartState extends State<_MeasurementChart> {
                     duration: Duration.zero,
                   ),
                 ),
-                if (widget.samples.isEmpty)
+                if (values.isEmpty)
                   Center(
                     child: Text(
-                      'Waiting for samples…',
+                      widget.samples.isEmpty
+                          ? 'Waiting for samples…'
+                          : 'No measurements recorded',
                       style: TextStyle(color: textColor),
                     ),
                   ),

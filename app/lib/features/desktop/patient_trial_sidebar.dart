@@ -127,12 +127,20 @@ class PatientTrialSidebar extends StatelessWidget {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${durationText(trial.duration)} · ${trial.totalDistance.toStringAsFixed(1)} ft',
+                          '${durationText(trial.duration)} · ${measurement(trial.totalDistance, decimals: 1)} ft',
                           style: TextStyle(
                             fontSize: 12,
                             color: context.theme.colors.mutedForeground,
                           ),
                         ),
+                        if (!trial.hasAllSensors)
+                          Text(
+                            'Sensors: ${trial.sensorLabel}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: context.theme.colors.mutedForeground,
+                            ),
+                          ),
                       ],
                     ),
                   ),

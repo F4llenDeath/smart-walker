@@ -20,6 +20,7 @@ class LiveTrialCharts extends StatelessWidget {
               key: ValueKey(series.startDate),
               startDate: series.startDate,
               samples: series.samples,
+              sensors: series.sensors,
               minSeconds: series.minSeconds,
               maxSeconds: series.maxSeconds,
               live: true,

@@ -211,6 +211,28 @@ class LiveSessionContent extends StatelessWidget {
                 listenable: telemetry,
                 builder: (context, _) {
                   final snapshot = telemetry.snapshot;
+                  if (recorder.recording ||
+                      snapshot.readyCount == 0 ||
+                      snapshot.ready) {
+                    return const SizedBox.shrink();
+                  }
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: NoticeBanner(
+                      'Limited sensors available',
+                      message:
+                          'Will record: ${snapshot.readySensors.map((role) => role.label).join(', ')}. '
+                          'Sensors connecting later will not be included until the next trial.',
+                    ),
+                  );
+                },
+              ),
+              ListenableBuilder(
+                listenable: telemetry,
+                builder: (context, _) {
+                  final snapshot = recorder.recording
+                      ? recorder.recordingSnapshot
+                      : telemetry.snapshot;
                   return FTileGroup.merge(
                     semanticsLabel: 'Live measurements',
                     physics: const NeverScrollableScrollPhysics(),
@@ -263,6 +285,8 @@ class LiveSessionContent extends StatelessWidget {
                 },
               ),
               if (recorder.recording) ...[
+                const SizedBox(height: 12),
+                Text('Recording sensors: ${recorder.sensorLabel}'),
                 const SizedBox(height: 20),
                 LiveTrialCharts(recorder: recorder),
               ],
@@ -309,11 +333,13 @@ class LiveSessionContent extends StatelessWidget {
                             Text(dateTimeText(trial.startDate)),
                             const SizedBox(height: 4),
                             Text(
-                              '${durationText(trial.duration)} · ${trial.totalDistance.toStringAsFixed(1)} ft · ${trial.source.name}',
+                              '${durationText(trial.duration)} · ${measurement(trial.totalDistance, decimals: 1)} ft · ${trial.source.name}',
                               style: const TextStyle(
                                 fontWeight: FontWeight.normal,
                               ),
                             ),
+                            if (!trial.hasAllSensors)
+                              Text('Sensors: ${trial.sensorLabel}'),
                           ],
                         ),
                       ),

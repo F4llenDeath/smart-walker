@@ -147,6 +147,8 @@ class _TrialDetailPageState extends State<TrialDetailPage> {
                 ],
               ),
               const SizedBox(height: 16),
+              Text('Recorded sensors: ${trial.sensorLabel}'),
+              const SizedBox(height: 16),
               if (trial.interruptionReason != null) ...[
                 NoticeBanner(
                   'Partial recording',

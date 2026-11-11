@@ -11,6 +11,8 @@ import '../domain/models/active_recording.dart';
 import '../domain/models/data_point.dart';
 import '../domain/models/live_trial_series.dart';
 import '../domain/models/patient.dart';
+import '../domain/models/sensor_status.dart';
+import '../domain/models/telemetry_snapshot.dart';
 import '../domain/models/trial.dart';
 import 'patient_controller.dart';
 import 'telemetry_controller.dart';
@@ -45,6 +47,7 @@ class TrialRecorder extends ChangeNotifier {
   double baseline = 0;
   double _lastAbsolute = 0;
   DataSource _source = DataSource.unknown;
+  Set<SensorRole> _sensors = const {};
   Trial? _completed;
   String? _successNotice;
   bool _checkpointBusy = false;
@@ -61,7 +64,16 @@ class TrialRecorder extends ChangeNotifier {
       !recoveryLoaded ||
       error != null;
   int get sampleCount => _points.length;
-  double? get trialDistance => recording && telemetry.snapshot.radarReady
+  Set<SensorRole> get sensors => _sensors;
+  String get sensorLabel => SensorRole.values
+      .where(_sensors.contains)
+      .map((role) => role.label)
+      .join(', ');
+  TelemetrySnapshot get recordingSnapshot => telemetry.snapshot.only(_sensors);
+  double? get trialDistance =>
+      recording &&
+          _sensors.contains(SensorRole.radar) &&
+          telemetry.snapshot.isReady(SensorRole.radar)
       ? max(0, telemetry.snapshot.distanceFt! - baseline)
       : null;
 
@@ -72,8 +84,11 @@ class TrialRecorder extends ChangeNotifier {
     if (patients.saving) return 'Wait for the current save to finish.';
     if (locked) return 'Resolve the pending recording or recovery first.';
     if (telemetry.switching) return 'Wait for the telemetry source to switch.';
-    if (!telemetry.snapshot.ready) {
-      return 'All three sensor streams must be ready and fresh.';
+    if (!telemetry.foreground) {
+      return 'Return to the foreground before recording.';
+    }
+    if (telemetry.snapshot.readyCount == 0) {
+      return 'At least one sensor stream must be ready and fresh.';
     }
     return null;
   }
@@ -110,8 +125,9 @@ class TrialRecorder extends ChangeNotifier {
     _patientId = patients.selected.id;
     patientName = patients.selected.name;
     _source = snapshot.source;
+    _sensors = snapshot.readySensors;
     _start = DateTime.now().toUtc();
-    baseline = snapshot.distanceFt!;
+    baseline = _sensors.contains(SensorRole.radar) ? snapshot.distanceFt! : 0;
     _lastAbsolute = baseline;
     _points.clear();
     _recentPoints.clear();
@@ -136,12 +152,10 @@ class TrialRecorder extends ChangeNotifier {
       _starting = false;
     }
     // Startup writes are asynchronous: recheck sensors and lifecycle afterwards.
-    if (_startInterruption != null ||
-        !telemetry.snapshot.ready ||
-        !telemetry.foreground ||
-        telemetry.snapshot.source != _source) {
-      final reason =
-          _startInterruption ?? 'Telemetry became unavailable while starting.';
+    final interruption =
+        _startInterruption ?? _telemetryProblem(telemetry.snapshot);
+    if (interruption != null) {
+      final reason = interruption;
       _completed = _trial(
         end: DateTime.now().toUtc(),
         completion: TrialCompletion.interrupted,
@@ -155,7 +169,11 @@ class TrialRecorder extends ChangeNotifier {
     _clock.start();
     elapsed.value = Duration.zero;
     state = RecorderState.recording;
-    _liveSeries.value = LiveTrialSeries(startDate: _start!, samples: const []);
+    _liveSeries.value = LiveTrialSeries(
+      startDate: _start!,
+      samples: const [],
+      sensors: _sensors,
+    );
     _samples = Timer.periodic(BleProtocol.sampleInterval, (_) => _sample());
     _display = Timer.periodic(const Duration(milliseconds: 30), (_) {
       elapsed.value = _clock.elapsed;
@@ -176,6 +194,7 @@ class TrialRecorder extends ChangeNotifier {
     endDate: end,
     dataPoints: _points,
     source: _source,
+    sensors: _sensors,
     completion: completion,
     interruptionReason: reason,
   );
@@ -188,19 +207,32 @@ class TrialRecorder extends ChangeNotifier {
     trial: trial ?? _trial(),
   );
 
+  String? _telemetryProblem(TelemetrySnapshot snapshot) {
+    if (!telemetry.foreground) return 'Application entered the background.';
+    if (telemetry.switching || snapshot.source != _source) {
+      return 'The telemetry source changed.';
+    }
+    if (!snapshot.readyFor(_sensors)) {
+      return 'A participating sensor disconnected or its telemetry became stale.';
+    }
+    if (_sensors.contains(SensorRole.radar) &&
+        snapshot.distanceFt! < _lastAbsolute - 0.005) {
+      return 'Radar cumulative distance reset or regressed.';
+    }
+    return null;
+  }
+
   void _telemetryChanged() {
-    if (!recording) return;
+    if (!recording && !_starting) return;
     final snapshot = telemetry.snapshot;
-    if (!snapshot.ready || snapshot.source != _source) {
-      unawaited(
-        stop(
-          reason:
-              'A required sensor disconnected or its telemetry became stale.',
-        ),
-      );
-    } else if (snapshot.distanceFt! < _lastAbsolute - 0.005) {
-      unawaited(stop(reason: 'Radar cumulative distance reset or regressed.'));
-    } else {
+    final reason = _telemetryProblem(snapshot);
+    if (reason != null) {
+      if (_starting) {
+        _startInterruption ??= reason;
+      } else {
+        unawaited(stop(reason: reason));
+      }
+    } else if (_sensors.contains(SensorRole.radar)) {
       _lastAbsolute = snapshot.distanceFt!;
     }
   }
@@ -208,13 +240,15 @@ class TrialRecorder extends ChangeNotifier {
   void _sample() {
     _telemetryChanged();
     if (!recording) return;
-    final snapshot = telemetry.snapshot;
+    final snapshot = recordingSnapshot;
     final point = DataPoint(
       timestamp: DateTime.now().toUtc(),
-      weightLeft: snapshot.weightLeft!,
-      weightRight: snapshot.weightRight!,
-      distanceFt: max(0, snapshot.distanceFt! - baseline),
-      speedFtS: snapshot.speedFtS!,
+      weightLeft: snapshot.weightLeft,
+      weightRight: snapshot.weightRight,
+      distanceFt: snapshot.radarReady
+          ? max(0, snapshot.distanceFt! - baseline)
+          : null,
+      speedFtS: snapshot.speedFtS,
     );
     _points.add(point);
     _recentPoints.addLast(point);
@@ -236,6 +270,7 @@ class TrialRecorder extends ChangeNotifier {
     _liveSeries.value = LiveTrialSeries(
       startDate: _start!,
       samples: _recentPoints,
+      sensors: _sensors,
     );
   }
 
@@ -325,6 +360,7 @@ class TrialRecorder extends ChangeNotifier {
     baseline = draft.baseline;
     _start = draft.trial.startDate;
     _source = draft.trial.source;
+    _sensors = draft.trial.sensors;
     _points
       ..clear()
       ..addAll(draft.trial.dataPoints);
@@ -334,6 +370,7 @@ class TrialRecorder extends ChangeNotifier {
       endDate: draft.trial.endDate ?? draft.checkpoint,
       dataPoints: draft.trial.dataPoints,
       source: draft.trial.source,
+      sensors: draft.trial.sensors,
       completion: TrialCompletion.recovered,
       interruptionReason:
           draft.trial.interruptionReason ??

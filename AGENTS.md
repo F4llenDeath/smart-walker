@@ -269,25 +269,35 @@ retry. macOS sharing remains unchanged; Windows uses native Save As.
 
 ## Recording and lifecycle invariants
 
-- Start only when storage/recovery is resolved and all three streams are ready.
-  Each stream must have a valid packet within **two seconds**.
+- Start only when storage/recovery is resolved and **at least one** sensor stream
+  is ready, with a valid packet within **two seconds**. Freeze all ready sensor
+  roles at Start: only that set participates in this trial. Sensors connecting
+  later remain available for a subsequent trial, not the current recording.
+  This supports limited-hardware development/testing without fabricating values.
 - Sample the latest device values every nominal **200 ms**. Device packets are
   not hardware-synchronized; late timers must not fabricate catch-up samples.
-- Capture patient, source, and an application-side distance baseline at start.
+- Capture patient, source, participating sensors, and (only when radar participates)
+  an application-side distance baseline at start.
   Do not send reset or other commands to controllers. Lock patient/source changes
   and destructive actions while a recording or save is pending.
 - Keep dashboard controls visible while scrolling, reserving their own space
   rather than covering charts/history. Display the **MM:SS.cc** clock only during
   recording, with no recording-panel title/explanation.
 - Live speed and left/right weight charts appear below measurements only during
-  a trial. Start each trial with an empty live series. Keep a bounded **30-second**
+  a trial and only for participating sensors. Missing readings display as `—`;
+  total weight requires both feet. Start each trial with an empty live series.
+  Keep a bounded **30-second**
   recent-sample buffer plus an edge sample for continuity; persistence, summaries,
   CSV, and historical charts retain the complete recording.
 - Live Y-axis limits expand when needed without shrinking on every sample.
   Update charts at the sampling cadence, independently of the faster elapsed clock.
-- Required sensor disconnect, stale telemetry, Bluetooth loss, decreasing radar
-  distance, or backgrounding stops recording and saves a partial trial. Never
-  continue with a missing required stream or fabricate replacement measurements.
+- Participating sensor disconnect/staleness, Bluetooth loss, backgrounding, or
+  decreasing distance from a participating radar stops recording and saves an
+  interrupted trial. Nonparticipating sensor changes do not stop a trial. Never
+  continue with a missing participating stream or fabricate replacement values.
+  Recheck the frozen set during the initial asynchronous recovery save; a transient
+  loss during startup must not be hidden by a quick reconnection. An intentionally
+  limited-sensor trial stopped normally has `completed` status, not `interrupted`.
 - A transient `inactive` state or ordinary focus change alone does not stop a
   trial, including focus lost to Windows Save As. Screen lock/backgrounding does;
   desktop minimize/hide stops and preserves a partial trial.
@@ -425,7 +435,16 @@ Compatibility is **historical Swift JSON -> Flutter**, not round-trip:
   for new sample timestamps.
 - Preserve trial fields `source`, `completion`, and optional `interruptionReason`.
   Legacy source is `unknown`, not assumed hardware.
-- Preserve mean speed/weight and last-minus-first distance summary calculations.
+- New trials store a nonempty `sensors` list of `leftFoot`, `rightFoot`, and/or
+  `radar`, including in recovery checkpoints. Trials without this metadata are
+  historical full-sensor trials and still require every numeric sample field.
+  Only fields for explicitly excluded sensors may be null/missing; malformed or
+  missing included measurements remain storage errors, not silent data repair.
+- Preserve mean speed/weight and last-minus-first distance calculations for
+  available values. No samples/measurements means unavailable, not zero. Total
+  weight is computed only from samples with both feet. Existing full-sensor data
+  remains readable; older app builds cannot necessarily read new limited-sensor
+  trials. Back up data before replacing/downgrading an installation.
 
 ### Windows per-user data and instance protection
 
@@ -452,7 +471,8 @@ destination so replacement stays on the same volume.
 ## CSV export behavior
 
 Keep CSV columns, units, precision, timestamp representation, and the suggested
-trial filename unchanged.
+trial filename unchanged. Limited-sensor trials use empty CSV cells for absent
+measurements (including total weight when either foot is absent), never zero.
 
 - iOS/Android/macOS share a CSV **file** through the platform interface; retain
   iPad popover positioning and existing export-file lifetime handling.

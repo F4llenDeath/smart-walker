@@ -19,6 +19,7 @@ class TrialCharts extends StatelessWidget {
     return MeasurementCharts(
       startDate: trial.startDate,
       samples: trial.dataPoints,
+      sensors: trial.sensors,
     );
   }
 }
