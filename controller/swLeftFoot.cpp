@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -8,7 +9,7 @@
 #define CHARACTERISTIC_UUID "B8F9E1C2-4D65-5EA3-A04F-1B2C3D4E5F60"
 #define BATTERY_CHARACTERISTIC_UUID "C9A0F2D3-5E76-4FB4-B150-2C3D4E5F6071"
 
-#define DEVICE_NAME         "SW-RightFoot"
+#define DEVICE_NAME         "SW-LeftFoot"
 #define SEND_INTERVAL_MS    200
 #define BATTERY_SAMPLE_INTERVAL_MS 1000
 #define BATTERY_NOTIFY_INTERVAL_MS 10000
@@ -80,7 +81,7 @@ float readWeight() {
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("Starting SW-RightFoot BLE...");
+  Serial.println("Starting SW-LeftFoot BLE...");
 
   pinMode(BAT_VOLT_PIN, INPUT);
   pinMode(BAT_VOLT_PIN_EN, OUTPUT);
@@ -155,7 +156,7 @@ void loop() {
 
   //reconnection
   if (!deviceConnected && oldDeviceConnected) {
-    delay(500);  
+    delay(500);  // give BLE stack time to settle
     BLEDevice::startAdvertising();
     Serial.println("Restarted advertising");
     oldDeviceConnected = false;
