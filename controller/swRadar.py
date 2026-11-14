@@ -5,19 +5,98 @@
 
 import serial
 import time
-import math
+import secrets
 import asyncio
 import threading
-import numpy as np
-from bless import BlessServer, BlessGATTCharacteristic, GATTCharacteristicProperties, GATTAttributePermissions
+import math
+import struct
+from bless import BlessServer, GATTCharacteristicProperties, GATTAttributePermissions
+
+# UART parsing and BLE framing only: target selection and movement calculations
+# remain in the Flutter app. This script and AWR1843config.cfg are the Pi files.
+MAGIC = b'\x02\x01\x04\x03\x06\x05\x08\x07'
+MAX_PACKET_BYTES = 32768
+MAX_BLE_POINTS = 128
+
+
+class RadarUartParser:
+    def __init__(self):
+        self.buffer = bytearray()
+
+    def feed(self, incoming):
+        self.buffer.extend(incoming)
+        # Bounded resynchronization; preserve a possible partial magic word.
+        if len(self.buffer) > 2 * MAX_PACKET_BYTES:
+            del self.buffer[:-MAX_PACKET_BYTES]
+        frames = []
+        while True:
+            start = self.buffer.find(MAGIC)
+            if start < 0:
+                if len(self.buffer) > 7:
+                    del self.buffer[:-7]
+                break
+            if start:
+                del self.buffer[:start]
+            if len(self.buffer) < 40:
+                break
+            header = struct.unpack_from('<8I', self.buffer, 8)
+            _, length, _, number, cycles, count, tlvs, subframe = header
+            if length < 40 or length > MAX_PACKET_BYTES or tlvs > (length - 40) // 8:
+                del self.buffer[0]
+                continue
+            if len(self.buffer) < length:
+                break
+            packet = bytes(self.buffer[:length])
+            del self.buffer[:length]
+            try:
+                offset = 40
+                points = None
+                for _ in range(tlvs):
+                    if offset + 8 > length:
+                        raise ValueError('Truncated TLV header')
+                    kind, size = struct.unpack_from('<II', packet, offset)
+                    offset += 8
+                    # mmWave SDK 3.x TLV length describes the payload only.
+                    end = offset + size
+                    if end > length:
+                        raise ValueError('Truncated TLV payload')
+                    if kind == 1:
+                        if points is not None or size != count * 16:
+                            raise ValueError('Invalid detected-point TLV length')
+                        points = list(struct.iter_unpack('<ffff', packet[offset:end]))
+                        if any(not math.isfinite(v) or abs(v) > 1000
+                               for point in points for v in point):
+                            raise ValueError('Invalid detected-point value')
+                    offset = end  # Skip side-info/other TLVs and preserve alignment.
+                if subframe != 0 or count > 0 and points is None:
+                    raise ValueError('Unsupported subframe or missing detections')
+                frames.append((number, cycles, points or []))
+            except (ValueError, struct.error):
+                # Consume the malformed packet, but never publish it as fresh data.
+                continue
+        return frames
+
+
+def encode_ble_frame(session, number, cycles, acquired_ms, points):
+    # Overflow is explicit: never silently choose/truncate points on the Pi.
+    overflow = len(points) > MAX_BLE_POINTS
+    forwarded = [] if overflow else points
+    return struct.pack('<IIIQHH', session, number, cycles, acquired_ms,
+                       len(forwarded), int(overflow)) + b''.join(
+        struct.pack('<ffff', *point) for point in forwarded)
+
+
+def ble_chunks(body, sequence):
+    for offset in range(0, len(body), 12):
+        yield struct.pack('<2sBBHH', b'SW', 2, offset // 12,
+                          sequence & 0xffff, len(body)) + body[offset:offset + 12]
+
 
 # Change the configuration file name
 configFileName = 'AWR1843config.cfg'
 
 CLIport = {}
 Dataport = {}
-byteBuffer = np.zeros(2**15,dtype = 'uint8')
-byteBufferLength = 0;
 
 
 # ------------------------------------------------------------------
@@ -99,379 +178,101 @@ def _wait_for_ack(port, timeout_s=1.2):
 
 
 # ------------------------------------------------------------------
-
-# Function to parse the data inside the configuration file
-def parseConfigFile(configFileName):
-    configParameters = {} # Initialize an empty dictionary to store the configuration parameters
-    
-    # Read the configuration file and send it to the board
-    config = [line.rstrip('\r\n') for line in open(configFileName)]
-    for i in config:
-        
-        # Split the line
-        splitWords = i.split(" ")
-        
-        # Hard code the number of antennas, change if other configuration is used
-        numRxAnt = 4
-        numTxAnt = 3
-        
-        # Get the information about the profile configuration
-        if "profileCfg" in splitWords[0]:
-            startFreq = int(float(splitWords[2]))
-            idleTime = int(splitWords[3])
-            rampEndTime = float(splitWords[5])
-            freqSlopeConst = float(splitWords[8])
-            numAdcSamples = int(splitWords[10])
-            numAdcSamplesRoundTo2 = 1;
-            
-            while numAdcSamples > numAdcSamplesRoundTo2:
-                numAdcSamplesRoundTo2 = numAdcSamplesRoundTo2 * 2;
-                
-            digOutSampleRate = int(splitWords[11]);
-            
-        # Get the information about the frame configuration    
-        elif "frameCfg" in splitWords[0]:
-            
-            chirpStartIdx = int(splitWords[1]);
-            chirpEndIdx = int(splitWords[2]);
-            numLoops = int(splitWords[3]);
-            numFrames = int(splitWords[4]);
-            framePeriodicity = float(splitWords[5]);
-
-            
-    # Combine the read data to obtain the configuration parameters           
-    numChirpsPerFrame = (chirpEndIdx - chirpStartIdx + 1) * numLoops
-    configParameters["numDopplerBins"] = numChirpsPerFrame / numTxAnt
-    configParameters["numRangeBins"] = numAdcSamplesRoundTo2
-    configParameters["rangeResolutionMeters"] = (3e8 * digOutSampleRate * 1e3) / (2 * freqSlopeConst * 1e12 * numAdcSamples)
-    configParameters["rangeIdxToMeters"] = (3e8 * digOutSampleRate * 1e3) / (2 * freqSlopeConst * 1e12 * configParameters["numRangeBins"])
-    configParameters["dopplerResolutionMps"] = 3e8 / (2 * startFreq * 1e9 * (idleTime + rampEndTime) * 1e-6 * configParameters["numDopplerBins"] * numTxAnt)
-    configParameters["maxRange"] = (300 * 0.9 * digOutSampleRate)/(2 * freqSlopeConst * 1e3)
-    configParameters["maxVelocity"] = 3e8 / (4 * startFreq * 1e9 * (idleTime + rampEndTime) * 1e-6 * numTxAnt)
-    
-    return configParameters
-   
-# ------------------------------------------------------------------
-
-# Funtion to read and parse the incoming data
-def readAndParseData18xx(Dataport, configParameters):
-    global byteBuffer, byteBufferLength
-    
-    # Constants
-    OBJ_STRUCT_SIZE_BYTES = 12;
-    BYTE_VEC_ACC_MAX_SIZE = 2**15;
-    MMWDEMO_UART_MSG_DETECTED_POINTS = 1;
-    MMWDEMO_UART_MSG_RANGE_PROFILE   = 2;
-    maxBufferSize = 2**15;
-    tlvHeaderLengthInBytes = 8;
-    pointLengthInBytes = 16;
-    magicWord = [2, 1, 4, 3, 6, 5, 8, 7]
-    
-    # Initialize variables
-    magicOK = 0 # Checks if magic number has been read
-    dataOK = 0 # Checks if the data has been read correctly
-    frameNumber = 0
-    detObj = {}
-    
-    readBuffer = Dataport.read(Dataport.in_waiting)
-    byteVec = np.frombuffer(readBuffer, dtype = 'uint8')
-    byteCount = len(byteVec)
-    
-    # Check that the buffer is not full, and then add the data to the buffer
-    if (byteBufferLength + byteCount) < maxBufferSize:
-        byteBuffer[byteBufferLength:byteBufferLength + byteCount] = byteVec[:byteCount]
-        byteBufferLength = byteBufferLength + byteCount
-        
-    # Check that the buffer has some data
-    if byteBufferLength > 16:
-        
-        # Check for all possible locations of the magic word
-        possibleLocs = np.where(byteBuffer == magicWord[0])[0]
-
-        # Confirm that is the beginning of the magic word and store the index in startIdx
-        startIdx = []
-        for loc in possibleLocs:
-            check = byteBuffer[loc:loc+8]
-            if np.all(check == magicWord):
-                startIdx.append(loc)
-               
-        # Check that startIdx is not empty
-        if startIdx:
-            
-            # Remove the data before the first start index
-            if startIdx[0] > 0 and startIdx[0] < byteBufferLength:
-                byteBuffer[:byteBufferLength-startIdx[0]] = byteBuffer[startIdx[0]:byteBufferLength]
-                byteBuffer[byteBufferLength-startIdx[0]:] = np.zeros(len(byteBuffer[byteBufferLength-startIdx[0]:]),dtype = 'uint8')
-                byteBufferLength = byteBufferLength - startIdx[0]
-                
-            # Check that there have no errors with the byte buffer length
-            if byteBufferLength < 0:
-                byteBufferLength = 0
-                
-            # word array to convert 4 bytes to a 32 bit number
-            word = [1, 2**8, 2**16, 2**24]
-            
-            # Read the total packet length
-            totalPacketLen = np.matmul(byteBuffer[12:12+4],word)
-            
-            # Check that all the packet has been read
-            if (byteBufferLength >= totalPacketLen) and (byteBufferLength != 0):
-                magicOK = 1
-    
-    # If magicOK is equal to 1 then process the message
-    if magicOK:
-        # word array to convert 4 bytes to a 32 bit number
-        word = [1, 2**8, 2**16, 2**24]
-        
-        # Initialize the pointer index
-        idX = 0
-        
-        # Read the header
-        magicNumber = byteBuffer[idX:idX+8]
-        idX += 8
-        version = format(np.matmul(byteBuffer[idX:idX+4],word),'x')
-        idX += 4
-        totalPacketLen = np.matmul(byteBuffer[idX:idX+4],word)
-        idX += 4
-        platform = format(np.matmul(byteBuffer[idX:idX+4],word),'x')
-        idX += 4
-        frameNumber = np.matmul(byteBuffer[idX:idX+4],word)
-        idX += 4
-        timeCpuCycles = np.matmul(byteBuffer[idX:idX+4],word)
-        idX += 4
-        numDetectedObj = np.matmul(byteBuffer[idX:idX+4],word)
-        idX += 4
-        numTLVs = np.matmul(byteBuffer[idX:idX+4],word)
-        idX += 4
-        subFrameNumber = np.matmul(byteBuffer[idX:idX+4],word)
-        idX += 4
-
-        # Read the TLV messages
-        for tlvIdx in range(numTLVs):
-            
-            # word array to convert 4 bytes to a 32 bit number
-            word = [1, 2**8, 2**16, 2**24]
-
-            # Check the header of the TLV message
-            tlv_type = np.matmul(byteBuffer[idX:idX+4],word)
-            idX += 4
-            tlv_length = np.matmul(byteBuffer[idX:idX+4],word)
-            idX += 4
-
-            # Read the data depending on the TLV message
-            if tlv_type == MMWDEMO_UART_MSG_DETECTED_POINTS:
-
-                # Initialize the arrays
-                x = np.zeros(numDetectedObj,dtype=np.float32)
-                y = np.zeros(numDetectedObj,dtype=np.float32)
-                z = np.zeros(numDetectedObj,dtype=np.float32)
-                velocity = np.zeros(numDetectedObj,dtype=np.float32)
-                
-                for objectNum in range(numDetectedObj):
-                    
-                    # Read the data for each object
-                    x[objectNum] = byteBuffer[idX:idX + 4].view(dtype=np.float32)
-                    idX += 4
-                    y[objectNum] = byteBuffer[idX:idX + 4].view(dtype=np.float32)
-                    idX += 4
-                    z[objectNum] = byteBuffer[idX:idX + 4].view(dtype=np.float32)
-                    idX += 4
-                    velocity[objectNum] = byteBuffer[idX:idX + 4].view(dtype=np.float32)
-                    idX += 4
-                
-                # Store the data in the detObj dictionary
-                detObj = {"numObj": numDetectedObj, "x": x, "y": y, "z": z, "velocity":velocity}
-                dataOK = 1
-                
- 
-        # Remove already processed data
-        if idX > 0 and byteBufferLength>idX:
-            shiftSize = totalPacketLen
-            
-                
-            byteBuffer[:byteBufferLength - shiftSize] = byteBuffer[shiftSize:byteBufferLength]
-            byteBuffer[byteBufferLength - shiftSize:] = np.zeros(len(byteBuffer[byteBufferLength - shiftSize:]),dtype = 'uint8')
-            byteBufferLength = byteBufferLength - shiftSize
-            
-            # Check that there are no errors with the buffer length
-            if byteBufferLength < 0:
-                byteBufferLength = 0         
-
-    return dataOK, frameNumber, detObj
-
-# ------------------------------------------------------------------
-
-# BLE settings (must match iOS app BluetoothManager.swift and swRadar.ino)
-BLE_DEVICE_NAME     = "SW-Radar"
-BLE_SERVICE_UUID    = "A7E8F0B1-3C54-4D92-9F3E-0A1B2C3D4E5F"
-BLE_CHAR_UUID       = "B8F9E1C2-4D65-5EA3-A04F-1B2C3D4E5F60"
-BLE_NOTIFY_INTERVAL = 0.2   # seconds (200 ms, same as swRadar.ino)
-METERS_TO_FEET      = 3.28084
-
-# Distance & speed tracking (same logic as swRadar.ino)
-totalDistanceFt  = 0.0
-currentSpeedFtS  = 0.0
-lastFrameTime    = 0.0
-frameCount       = 0
-frame_period_s = 0.1 #radar frame period from the config (frameCfg = 100ms)
-forward_sign= -1 #radar convenction: negative Doppler is approaching, flip to +1 is distance goes backwards
-min_points =3 #number of points needed to trust a speed
-min_y_m = 0.3 #ignore points closer than this ahead of the radar (m)
-min_cos = 0.5 #ignore points more than -60 degrees off straight ahead
-speed_hold_s = 0.5 #hold the last valid speed for up to 0.5 seconds during brief detection gaps
-
-lastFramenumber= None 
-lastSpeedMs = 0.0
-lastValidSpeedMs = 0.0
-lastValidSpeedTime = None
+# UART/BLE bridge. Target selection, speed geometry and trial range tracking
+# belong to the Flutter app, not the Pi. Both ends require protocol v2.
+BLE_DEVICE_NAME = "SW-Radar"
+BLE_SERVICE_UUID = "A7E8F0B1-3C54-4D92-9F3E-0A1B2C3D4E5F"
+BLE_CHAR_UUID = "B8F9E1C2-4D65-5EA3-A04F-1B2C3D4E5F60"
+BLE_NOTIFY_INTERVAL = 0.2
+latestFrame = None
+frameLock = threading.Lock()
+frameCount = 0
 
 
-
-# ------------------------------------------------------------------
-
-# Function to process a parsed frame and estimate forward speed and distance
-# (replaces the original update() which plotted a scatter chart)
-def processFrame(detObj, frameNumber):
-    global totalDistanceFt, currentSpeedFtS,frameCount
-    global lastFramenumber, lastSpeedMs, lastValidSpeedMs, lastValidSpeedTime
-
-    frameCount += 1
-    #Time since previous frame, from the radar's own frame counter
-    frameNumber = int(frameNumber)
-    if lastFramenumber is None or frameNumber <= lastFramenumber or frameNumber- lastFramenumber > 20:
-        dt = frame_period_s
-    else: 
-        dt = (frameNumber - lastFramenumber)* frame_period_s
-    lastFramenumber = frameNumber
-    
-    measuredSpeedMs = None
-    if detObj and detObj["numObj"] > 0 and len(detObj["x"]) > 0:
-        x= detObj["x"]
-        y= detObj["y"]
-        z= detObj["z"]
-        v= detObj["velocity"]
-        #Range to each detected point in meters (now includes z)
-        ranges = np.sqrt(x**2 + y**2 + z**2)
-
-        # Use points ahead of the radar and not too far off to the side.
-        cosAngle= y/ np.maximum(ranges, 1e-6)
-        usable = (y> min_y_m) & (cosAngle > min_cos)
-        if np.count_nonzero(usable) >= min_points:
-            #each point only sees the part of the motion along its line of sight so dividing by cos(angle) recovers walkers true speed
-            perPoint= forward_sign *v[usable]/cosAngle[usable]
-            measuredSpeedMs = float(np.median(perPoint))
-
-    now = time.monotonic()
-    if measuredSpeedMs is not None:
-        lastValidSpeedMs = measuredSpeedMs
-        lastValidSpeedTime = now
-        speedMs = measuredSpeedMs
-    elif lastValidSpeedTime is not None and now - lastValidSpeedTime <= speed_hold_s:
-        # Keep the displayed estimate and distance integration continuous briefly.
-        speedMs = lastValidSpeedMs
-    else:
-        speedMs = 0.0
-    
-    #average of last and current speed multiplied by elapsed time
-    distanceStepft = 0.5 * (abs(lastSpeedMs) + abs(speedMs)) * dt * METERS_TO_FEET
-    totalDistanceFt += distanceStepft
-    lastSpeedMs = speedMs
-    currentSpeedFtS = abs(speedMs) * METERS_TO_FEET
-
-# ------------------------------------------------------------------
-
-# Background thread: continuously reads and parses radar data
-def radarReaderThread(Dataport, configParameters, stopEvent):
+def radarReaderThread(Dataport, stopEvent):
+    global latestFrame, frameCount
+    parser = RadarUartParser()
+    previousNumber = None
+    session = secrets.randbits(32)
     while not stopEvent.is_set():
         try:
-            dataOK, frameNumber, detObj = readAndParseData18xx(Dataport, configParameters)
-            if dataOK:
-                processFrame(detObj, frameNumber)
+            incoming = Dataport.read(min(max(Dataport.in_waiting, 1), 32768))
+            frames = parser.feed(incoming)
+            if not frames:
+                continue
+            # Keep the newest complete UART frame, not a queue of stale targets.
+            number, cycles, points = frames[-1]
+            if previousNumber is not None:
+                advance = (number - previousNumber) & 0xffffffff
+                if advance == 0:
+                    continue
+                if advance >= 0x80000000:
+                    session = secrets.randbits(32)  # Explicit radar restart.
+            previousNumber = number
+            acquired_ms = time.monotonic_ns() // 1000000
+            with frameLock:
+                latestFrame = (session, number, cycles, acquired_ms, points)
+                frameCount += len(frames)
         except Exception as e:
-            print(f"[Radar] Parse error: {e}")
-        time.sleep(0.03)  # ~30 Hz, same as original (0.05 was ~20 Hz)
+            print(f"[Radar] Read/parse error: {e}")
+            stopEvent.wait(0.03)
 
-# ------------------------------------------------------------------
 
-# Async main — sets up BLE server and runs the radar reader
 async def main():
-    global totalDistanceFt, currentSpeedFtS
-
-    # 1. Configure radar serial ports and send config
     print("[Radar] Configuring serial ports...")
     CLIport, Dataport = serialConfig(configFileName)
-    configParameters = parseConfigFile(configFileName)
-    print(f"[Radar] Max range: {configParameters['maxRange']:.2f} m, "
-          f"Max velocity: {configParameters['maxVelocity']:.2f} m/s")
-
-    # 2. Start BLE GATT server (same UUIDs as swRadar.ino)
-    print(f"[BLE] Starting server as '{BLE_DEVICE_NAME}'...")
+    print(f"[BLE] Starting detection-frame v2 server as '{BLE_DEVICE_NAME}'...")
     server = BlessServer(name=BLE_DEVICE_NAME)
     await server.add_new_service(BLE_SERVICE_UUID)
-
-    char_flags = (
-        GATTCharacteristicProperties.read |
-        GATTCharacteristicProperties.notify
-    )
-    permissions = GATTAttributePermissions.readable
     await server.add_new_characteristic(
         BLE_SERVICE_UUID, BLE_CHAR_UUID,
-        char_flags, None, permissions,
+        GATTCharacteristicProperties.read | GATTCharacteristicProperties.notify,
+        None, GATTAttributePermissions.readable,
     )
     await server.start()
-    print(f"[BLE] Advertising — Service: {BLE_SERVICE_UUID}")
-
-    # 3. Start radar reader in a background thread
     stopEvent = threading.Event()
-    reader = threading.Thread(
-        target=radarReaderThread,
-        args=(Dataport, configParameters, stopEvent),
-        daemon=True,
-    )
+    reader = threading.Thread(target=radarReaderThread,
+                              args=(Dataport, stopEvent), daemon=True)
     reader.start()
-    print("[Radar] Reader thread started — listening for data...")
-
-    # 4. Main loop: update BLE characteristic and notify
-    lastPrint = time.time()
+    lastSent = None
+    sequence = 0
+    lastPrint = time.monotonic()
     try:
         while True:
-            # Build payload in same format as swRadar.ino: "distance,speed"
-            payload = f"{totalDistanceFt:.2f},{currentSpeedFtS:.2f}"
-            server.get_characteristic(BLE_CHAR_UUID).value = payload.encode("utf-8")
-            server.update_value(BLE_SERVICE_UUID, BLE_CHAR_UUID)
-
-            # Debug print every 1 second
-            now = time.time()
-            if now - lastPrint >= 1.0:
-                lastPrint = now
-                print(f"[Radar] Frames: {frameCount} | "
-                      f"Distance: {totalDistanceFt:.2f} ft | "
-                      f"Speed: {currentSpeedFtS:.2f} ft/s | "
-                      f"BLE: {payload}")
-
-            await asyncio.sleep(BLE_NOTIFY_INTERVAL)
-
+            started = time.monotonic()
+            with frameLock:
+                frame = latestFrame
+                count = frameCount
+            # No periodic resend: an old UART value must never refresh app freshness.
+            if frame is not None:
+                session, number, cycles, acquired_ms, points = frame
+                identity = (session, number, acquired_ms)
+                age_ms = time.monotonic_ns() // 1000000 - acquired_ms
+                if identity != lastSent and age_ms <= 500:
+                    body = encode_ble_frame(session, number, cycles, acquired_ms, points)
+                    for chunk in ble_chunks(body, sequence):
+                        server.get_characteristic(BLE_CHAR_UUID).value = bytearray(chunk)
+                        server.update_value(BLE_SERVICE_UUID, BLE_CHAR_UUID)
+                        # Yield so the backend publishes each <=20-byte value in order.
+                        await asyncio.sleep(0.002)
+                    lastSent = identity
+                    sequence = (sequence + 1) & 0xffff
+                if started - lastPrint >= 1:
+                    lastPrint = started
+                    print(f"[Radar] Frames: {count} | Frame: {number} | "
+                          f"Detections: {len(points)} | Age: {age_ms} ms | BLE v2")
+            await asyncio.sleep(max(0, BLE_NOTIFY_INTERVAL - (time.monotonic() - started)))
     except KeyboardInterrupt:
-        print("\n[Main] Shutting down...")
-
+        print("[Main] Shutting down...")
     finally:
         stopEvent.set()
         reader.join(timeout=2)
         await server.stop()
-        CLIport.write(('sensorStop\n').encode())
+        CLIport.write(b'sensorStop\n')
         CLIport.close()
         Dataport.close()
         print("[Main] Clean shutdown complete")
 
 
-# -------------------------    MAIN   -----------------------------------------  
-
 if __name__ == "__main__":
     asyncio.run(main())
-        
-    
-
-
-
-
-

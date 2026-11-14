@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import '../core/ble_protocol.dart';
+import '../core/radar_protocol.dart';
 import '../data/ble/ble_transport.dart';
 import '../domain/models/battery_status.dart';
 import '../domain/models/sensor_status.dart';
@@ -180,6 +181,7 @@ class DeviceCoordinator extends ChangeNotifier {
     status.clear();
     status.deviceId = device.id;
     status.phase = SensorPhase.connecting;
+    final radarDecoder = RadarFrameDecoder();
     notifyListeners();
     try {
       await _stopScan();
@@ -216,6 +218,51 @@ class DeviceCoordinator extends ChangeNotifier {
             .listen(
               (bytes) {
                 if (!current()) return;
+                if (role == SensorRole.radar) {
+                  if (bytes.isNotEmpty && bytes.first != 0x53) {
+                    radarDecoder.reset();
+                    status.radarFrame = null;
+                    status.value = null;
+                    status.speed = null;
+                    status.error = 'Update the Pi radar script: detection-frame protocol v2 is required.';
+                    status.phase = SensorPhase.waiting;
+                    notifyListeners();
+                    return;
+                  }
+                  try {
+                    final frame = radarDecoder.add(
+                      bytes,
+                      _clock.elapsedMilliseconds,
+                    );
+                    if (frame == null) return;
+                    status.radarFrame = frame;
+                    status.value =
+                        null; // Raw ranges are not travelled distance.
+                    final target = frame.nearest;
+                    status.speed = target == null
+                        ? null
+                        : target.radialVelocity.abs() *
+                              target.rangeMeters /
+                              target.y *
+                              3.28084;
+                    status.lastReceived = DateTime.now().toUtc();
+                    status.lastReceiptMilliseconds = _clock.elapsedMilliseconds;
+                    status.phase = target == null
+                        ? SensorPhase.waiting
+                        : SensorPhase.ready;
+                    status.error = frame.overflow
+                        ? 'Radar frame exceeds the supported point count.'
+                        : target == null
+                        ? 'No eligible forward radar target.'
+                        : null;
+                    if (target != null) _attempts[role] = 0;
+                    notifyListeners();
+                    if (allReady) unawaited(_stopScan());
+                  } on FormatException catch (exception) {
+                    unawaited(_failed(role, generation, exception.message));
+                  }
+                  return;
+                }
                 final parsed = BleProtocol.parse(role, bytes);
                 if (parsed == null) return;
                 status.value = parsed.value;
@@ -382,10 +429,12 @@ class DeviceCoordinator extends ChangeNotifier {
     for (final status in sensors.values) {
       if (status.battery.expire(_clock.elapsedMilliseconds)) changed = true;
       final receipt = status.lastReceiptMilliseconds;
+      final freshness = status.role == SensorRole.radar
+          ? 1000
+          : BleProtocol.freshness.inMilliseconds;
       if (status.phase == SensorPhase.ready &&
           receipt != null &&
-          _clock.elapsedMilliseconds - receipt >
-              BleProtocol.freshness.inMilliseconds) {
+          _clock.elapsedMilliseconds - receipt > freshness) {
         status.phase = SensorPhase.stale;
         changed = true;
       }

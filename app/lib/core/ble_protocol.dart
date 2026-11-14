@@ -35,20 +35,15 @@ abstract final class BleProtocol {
     SensorRole role,
     List<int> bytes,
   ) {
+    // Radar uses versioned binary detection frames, never legacy integrated CSV.
+    if (role == SensorRole.radar) return null;
     try {
       final text = utf8.decode(bytes).trim();
       final parts = text.split(',');
-      if (parts.length != (role == SensorRole.radar ? 2 : 1)) return null;
+      if (parts.length != 1) return null;
       final value = double.tryParse(parts[0].trim());
-      final speed = role == SensorRole.radar
-          ? double.tryParse(parts[1].trim())
-          : null;
       if (value == null || !value.isFinite) return null;
-      if (role == SensorRole.radar &&
-          (speed == null || !speed.isFinite || value < 0 || speed < 0)) {
-        return null;
-      }
-      return (value: value, speed: speed);
+      return (value: value, speed: null);
     } on FormatException {
       return null;
     }

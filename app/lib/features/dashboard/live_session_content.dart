@@ -264,14 +264,13 @@ class LiveSessionContent extends StatelessWidget {
                       FTileGroup(
                         divider: FItemDivider.none,
                         children: [
-                          _metricTile(
-                            context,
-                            recorder.recording ? 'Trial distance' : 'Distance',
-                            recorder.recording
-                                ? recorder.trialDistance
-                                : snapshot.distanceFt,
-                            'ft',
-                          ),
+                          if (recorder.recording)
+                            _metricTile(
+                              context,
+                              'Trial distance',
+                              recorder.trialDistance,
+                              'ft',
+                            ),
                           _metricTile(
                             context,
                             'Speed',

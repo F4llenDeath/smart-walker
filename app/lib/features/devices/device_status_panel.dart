@@ -206,7 +206,24 @@ class _DeviceStatusPanelState extends State<DeviceStatusPanel> {
         excludeSemantics: true,
         child: Row(
           children: [
-            Expanded(child: Text(role.label)),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(role.label),
+                  if (role == SensorRole.radar &&
+                      !simulated &&
+                      widget.dependencies.devices.sensors[role]!.error != null)
+                    Text(
+                      widget.dependencies.devices.sensors[role]!.error!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: context.theme.colors.mutedForeground,
+                      ),
+                    ),
+                ],
+              ),
+            ),
             if (showBattery) ...[
               FTooltip(
                 tipBuilder: (context, controller) => Text(batteryLabel),

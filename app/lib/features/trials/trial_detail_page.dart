@@ -148,6 +148,10 @@ class _TrialDetailPageState extends State<TrialDetailPage> {
               ),
               const SizedBox(height: 16),
               Text('Recorded sensors: ${trial.sensorLabel}'),
+              if (trial.distanceMethod == DistanceMethod.wallRange)
+                const Text(
+                  'Distance: displacement toward the trial target (not path length).',
+                ),
               const SizedBox(height: 16),
               if (trial.interruptionReason != null) ...[
                 NoticeBanner(

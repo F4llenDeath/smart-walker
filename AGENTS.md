@@ -18,7 +18,7 @@ targets are not included.
 
 Preserve these workflows:
 
-- Live left/right/total weight in lbs, distance in ft, and speed in ft/s.
+- Live left/right/total weight in lbs and speed in ft/s; trial-only distance in ft.
 - Automatic three-sensor discovery, notification subscriptions, and reconnection.
 - Patient selection, creation, confirmed deletion, and an Unassigned patient.
 - Nominal 200 ms trial samples, a monotonic elapsed display, and live charts.
@@ -189,9 +189,13 @@ controller/
 - Keep hardware pin assignments, calibration factors, and taring behavior intact
   unless a task explicitly requires a hardware change. Preserve reconnection and
   advertising behavior when changing peripheral code.
-- `controller/swRadar.py` uses `pyserial`, NumPy, and `bless`; it processes radar
-  serial data on the Raspberry Pi and exposes the existing BLE telemetry contract.
-  Do not move radar processing or USB serial access into a desktop app port.
+- `controller/swRadar.py` uses the existing `pyserial` and `bless` libraries to
+  configure/read the radar and relay detections. Its embedded helpers parse
+  SDK 3.x UART frames and chunk BLE payloads using the Python standard library.
+  Deploy only `swRadar.py` and `AWR1843config.cfg` as project files on the Pi;
+  there is no separate helper module. Keep USB serial/configuration on the Pi.
+  Target selection, speed geometry, filtering, trial lock, and distance calculations
+  belong in shared Flutter services, not the Pi, widgets, or platform-specific hosts.
 - The radar script reads `AWR1843config.cfg` relative to its working directory;
   run it from `controller/` on the configured hardware. Serial paths and baud
   rates are hardware-specific. Starting it sends configuration commands to the
@@ -277,7 +281,12 @@ retry. macOS sharing remains unchanged; Windows uses native Save As.
 - Sample the latest device values every nominal **200 ms**. Device packets are
   not hardware-synchronized; late timers must not fabricate catch-up samples.
 - Capture patient, source, participating sensors, and (only when radar participates)
-  an application-side distance baseline at start.
+  an application-side distance target/baseline at Start. Hardware radar sends
+  detections, not cumulative distance. Hide distance when not recording. Lock the
+  nearest eligible forward detection at Start; update a separate moving tracking
+  reference while retaining the original range baseline. Compute nonnegative
+  `initialRange - filteredCurrentRange` in ft, not integrated speed or accumulated
+  absolute range changes. This is straight-approach displacement, not path length.
   Do not send reset or other commands to controllers. Lock patient/source changes
   and destructive actions while a recording or save is pending.
 - Keep dashboard controls visible while scrolling, reserving their own space
@@ -291,8 +300,8 @@ retry. macOS sharing remains unchanged; Windows uses native Save As.
   CSV, and historical charts retain the complete recording.
 - Live Y-axis limits expand when needed without shrinking on every sample.
   Update charts at the sampling cadence, independently of the faster elapsed clock.
-- Participating sensor disconnect/staleness, Bluetooth loss, backgrounding, or
-  decreasing distance from a participating radar stops recording and saves an
+- Participating sensor disconnect/staleness, Bluetooth loss, backgrounding, radar
+  source restart, or loss of the trial's locked target stops recording and saves an
   interrupted trial. Nonparticipating sensor changes do not stop a trial. Never
   continue with a missing participating stream or fabricate replacement values.
   Recheck the frozen set during the initial asynchronous recovery save; a transient
@@ -314,24 +323,75 @@ retry. macOS sharing remains unchanged; Windows uses native Save As.
 
 ## BLE contract and troubleshooting
 
-Preserve the existing controller protocol:
+Preserve foot packets and sensor identities. Radar now requires the coordinated
+Pi/app detection-frame v2 update; do not interpret legacy integrated CSV as range:
 
 | Advertised device name | UTF-8 notification example | Units |
 | --- | --- | --- |
 | `SW-LeftFoot` | `32.50` | lbs |
 | `SW-RightFoot` | `30.25` | lbs |
-| `SW-Radar` | `12.50,1.25` | ft, ft/s |
+| `SW-Radar` | Binary `SW` version `2` detection-frame chunks | metres, radial m/s on wire; ft, ft/s in app |
 
 ```text
 Service:        A7E8F0B1-3C54-4D92-9F3E-0A1B2C3D4E5F
 Characteristic: B8F9E1C2-4D65-5EA3-A04F-1B2C3D4E5F60
 ```
 
+### Radar detection-frame v2
+
+- Service/telemetry characteristic UUIDs above and advertised name stay unchanged.
+  Deploy the updated `swRadar.py` alongside `AWR1843config.cfg` on the Pi and
+  rebuild the app. No separate Python helper file is required. Old apps
+  cannot read this stream; old Pi `distance,speed` packets are explicitly rejected
+  with update guidance. Existing saved trials are not rewritten.
+- The Pi forwards all detections from the newest complete UART frame at nominal
+  **200 ms** intervals, once per frame, with no cached-value heartbeat. Frames
+  older than **500 ms** at send start are skipped. Unknown TLVs are skipped by
+  payload length; empty frames are valid. UART bounds/padding are consumed in full.
+  No radar configuration, serial path/baud, or dependency upgrade is included.
+- Each BLE notification is at most **20 bytes**. Little-endian chunk header:
+  ASCII `SW` (2 bytes), version `2` (u8), zero-based chunk index (u8), transport
+  sequence (u16), total body bytes (u16), then up to **12** body bytes. Sequence
+  wraps at 65536; every chunk repeats its sequence/body length. Chunk order must
+  be exact; duplicate/missing/mixed chunks invalidate the partial frame.
+- Body: bridge session (u32, new on script/radar restart), radar frame number
+  (u32), radar CPU cycles (u32), Pi monotonic complete-frame receive time in ms
+  (u64), point count (u16), flags (u16), then **16 bytes per point**: little-endian
+  float32 `x,y,z,radialVelocity` in metres/metres-per-second. This Pi timestamp is
+  not a synchronized hardware acquisition timestamp; CPU cycles are forwarded
+  unchanged. Maximum **128 points**; larger frames send zero points with overflow
+  flag `1`, never a silently selected/truncated subset. Ordinary flags are `0`.
+- The app has one bounded reassembly buffer, a **750 ms** assembly timeout, finite
+  numeric validation, duplicate/restart detection, and a **500 ms** excess-delay
+  check relative to the best observed Pi/app clock offset. Initial link latency
+  cannot be inferred without synchronization. Only complete new frames refresh
+  stream freshness; hardware radar becomes stale after **one second**. Valid
+  empty/overflow frames make radar unavailable immediately without pretending BLE
+  disconnected. Actual transmission rate depends on point count/link capacity.
+- Live speed uses the nearest eligible forward point's absolute radial velocity,
+  corrected by `range/y`; it is independent of the trial distance target and is
+  never held/extrapolated through missing detections. Eligibility initially uses
+  forward `y >= 0.3 m`, range `<= 9.7 m`, azimuth/elevation within **±20°**.
+- Trial association chooses the point nearest the previous accepted range and
+  lateral coordinates within a moving gate: **0.15 m + 1.5 m/s × elapsed time**
+  in range and **0.3 m + 0.2 × previous range** laterally. Use a trailing median
+  of up to **three** accepted ranges, not a running maximum. Gates, filtering,
+  angle correction, and sparse-point identity assumptions are **provisional,
+  not hardware-validated**. A different object within the gate can be ambiguous.
+- The conservative first implementation stops/saves on the first complete frame
+  with no acceptable trial target, or a gap over **one second**. Do not silently
+  relock, save replacement zero/held values, extrapolate from speed, or let live
+  speed validate a lost distance target. Small accepted range reversals are
+  allowed; cumulative-distance regression protection remains for simulation only.
+  No app Start/Stop/reset commands are sent to the Pi. Validate stationary
+  readings, measured approaches, pauses, intruders, target loss, and reconnects
+  against a tape measure before relying on clinical distance accuracy.
+
 ### Optional foot battery status
 
 Both feet add Read + Notify characteristic
 `C9A0F2D3-5E76-4FB4-B150-2C3D4E5F6071` under the existing service. Advertising,
-device names, and weight/radar packets remain unchanged. Battery payload is four
+device names, and weight packets remain unchanged by battery telemetry. Battery payload is four
 bytes: protocol version `1`, validity `0`/`1`, then unsigned 16-bit little-endian
 millivolts (zero when invalid). Values outside **2500–4500 mV** are rejected;
 these are plausibility bounds, not recommended operating/cutoff voltages.
@@ -440,8 +500,13 @@ Compatibility is **historical Swift JSON -> Flutter**, not round-trip:
   historical full-sensor trials and still require every numeric sample field.
   Only fields for explicitly excluded sensors may be null/missing; malformed or
   missing included measurements remain storage errors, not silent data repair.
-- Preserve mean speed/weight and last-minus-first distance calculations for
-  available values. No samples/measurements means unavailable, not zero. Total
+- Preserve mean speed/weight and historical/simulation last-minus-first distance
+  calculations. New hardware-radar trials add `distanceMethod: wallRange` and
+  their summary uses the last recorded baseline-relative displacement (do not
+  subtract the first sample again). Recovery preserves this marker. CSV columns
+  remain unchanged; `distanceFt` holds trial displacement. Older app versions
+  may misinterpret new distance semantics, so avoid downgrading without backups.
+  No samples/measurements means unavailable, not zero. Total
   weight is computed only from samples with both feet. Existing full-sensor data
   remains readable; older app builds cannot necessarily read new limited-sensor
   trials. Back up data before replacing/downgrading an installation.

@@ -35,7 +35,7 @@ class TelemetryController extends ChangeNotifier {
       source: DataSource.hardware,
       weightLeft: left.phase == SensorPhase.ready ? left.value : null,
       weightRight: right.phase == SensorPhase.ready ? right.value : null,
-      distanceFt: radar.phase == SensorPhase.ready ? radar.value : null,
+      radarFrame: radar.phase == SensorPhase.ready ? radar.radarFrame : null,
       speedFtS: radar.phase == SensorPhase.ready ? radar.speed : null,
       leftReady: left.phase == SensorPhase.ready,
       rightReady: right.phase == SensorPhase.ready,

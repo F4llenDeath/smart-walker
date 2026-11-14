@@ -15,6 +15,7 @@ import '../domain/models/sensor_status.dart';
 import '../domain/models/telemetry_snapshot.dart';
 import '../domain/models/trial.dart';
 import 'patient_controller.dart';
+import 'radar_distance_tracker.dart';
 import 'telemetry_controller.dart';
 
 enum RecorderState { idle, recording, saving, saveFailed }
@@ -46,6 +47,7 @@ class TrialRecorder extends ChangeNotifier {
   DateTime? _start;
   double baseline = 0;
   double _lastAbsolute = 0;
+  RadarDistanceTracker? _radarTracker;
   DataSource _source = DataSource.unknown;
   Set<SensorRole> _sensors = const {};
   Trial? _completed;
@@ -69,13 +71,29 @@ class TrialRecorder extends ChangeNotifier {
       .where(_sensors.contains)
       .map((role) => role.label)
       .join(', ');
-  TelemetrySnapshot get recordingSnapshot => telemetry.snapshot.only(_sensors);
-  double? get trialDistance =>
-      recording &&
-          _sensors.contains(SensorRole.radar) &&
-          telemetry.snapshot.isReady(SensorRole.radar)
-      ? max(0, telemetry.snapshot.distanceFt! - baseline)
-      : null;
+  TelemetrySnapshot get recordingSnapshot {
+    final snapshot = telemetry.snapshot.only(_sensors);
+    return TelemetrySnapshot(
+      source: snapshot.source,
+      weightLeft: snapshot.weightLeft,
+      weightRight: snapshot.weightRight,
+      distanceFt: trialDistance,
+      speedFtS: snapshot.speedFtS,
+      leftReady: snapshot.leftReady,
+      rightReady: snapshot.rightReady,
+      radarReady: snapshot.radarReady,
+      radarFrame: snapshot.radarFrame,
+    );
+  }
+
+  double? get trialDistance {
+    if (!recording || !_sensors.contains(SensorRole.radar)) return null;
+    final snapshot = telemetry.snapshot;
+    if (!snapshot.isReady(SensorRole.radar)) return null;
+    return _source == DataSource.simulation
+        ? max(0, snapshot.distanceFt! - baseline)
+        : _radarTracker?.distanceFt;
+  }
 
   String? get startUnavailable {
     if (!patients.ready) {
@@ -127,7 +145,15 @@ class TrialRecorder extends ChangeNotifier {
     _source = snapshot.source;
     _sensors = snapshot.readySensors;
     _start = DateTime.now().toUtc();
-    baseline = _sensors.contains(SensorRole.radar) ? snapshot.distanceFt! : 0;
+    _radarTracker = null;
+    if (_sensors.contains(SensorRole.radar) && _source == DataSource.hardware) {
+      final frame = snapshot.radarFrame!;
+      _radarTracker = RadarDistanceTracker(frame, frame.nearest!);
+      baseline =
+          _radarTracker!.initialRangeMeters * RadarDistanceTracker.metersToFeet;
+    } else {
+      baseline = _sensors.contains(SensorRole.radar) ? snapshot.distanceFt! : 0;
+    }
     _lastAbsolute = baseline;
     _points.clear();
     _recentPoints.clear();
@@ -144,6 +170,7 @@ class TrialRecorder extends ChangeNotifier {
       await drafts.save(_draft());
     } catch (exception) {
       state = RecorderState.idle;
+      _radarTracker = null;
       error =
           'Recording could not start because its recovery file could not be saved. $exception';
       notifyListeners();
@@ -162,6 +189,7 @@ class TrialRecorder extends ChangeNotifier {
         reason: reason,
       );
       _successNotice = 'Partial trial preserved: $reason';
+      _radarTracker = null;
       await _saveCompleted();
       return;
     }
@@ -195,6 +223,10 @@ class TrialRecorder extends ChangeNotifier {
     dataPoints: _points,
     source: _source,
     sensors: _sensors,
+    distanceMethod:
+        _source == DataSource.hardware && _sensors.contains(SensorRole.radar)
+        ? DistanceMethod.wallRange
+        : DistanceMethod.integrated,
     completion: completion,
     interruptionReason: reason,
   );
@@ -215,9 +247,13 @@ class TrialRecorder extends ChangeNotifier {
     if (!snapshot.readyFor(_sensors)) {
       return 'A participating sensor disconnected or its telemetry became stale.';
     }
-    if (_sensors.contains(SensorRole.radar) &&
-        snapshot.distanceFt! < _lastAbsolute - 0.005) {
-      return 'Radar cumulative distance reset or regressed.';
+    if (_sensors.contains(SensorRole.radar)) {
+      if (_source == DataSource.hardware) {
+        _radarTracker!.update(snapshot.radarFrame!);
+        if (_radarTracker!.failure != null) return _radarTracker!.failure;
+      } else if (snapshot.distanceFt! < _lastAbsolute - 0.005) {
+        return 'Simulated cumulative distance reset or regressed.';
+      }
     }
     return null;
   }
@@ -232,7 +268,8 @@ class TrialRecorder extends ChangeNotifier {
       } else {
         unawaited(stop(reason: reason));
       }
-    } else if (_sensors.contains(SensorRole.radar)) {
+    } else if (_sensors.contains(SensorRole.radar) &&
+        _source == DataSource.simulation) {
       _lastAbsolute = snapshot.distanceFt!;
     }
   }
@@ -245,9 +282,7 @@ class TrialRecorder extends ChangeNotifier {
       timestamp: DateTime.now().toUtc(),
       weightLeft: snapshot.weightLeft,
       weightRight: snapshot.weightRight,
-      distanceFt: snapshot.radarReady
-          ? max(0, snapshot.distanceFt! - baseline)
-          : null,
+      distanceFt: snapshot.distanceFt,
       speedFtS: snapshot.speedFtS,
     );
     _points.add(point);
@@ -306,6 +341,7 @@ class TrialRecorder extends ChangeNotifier {
           : TrialCompletion.interrupted,
       reason: reason,
     );
+    _radarTracker = null;
     _successNotice = reason == null
         ? 'Trial saved.'
         : 'Partial trial preserved: $reason';
@@ -371,6 +407,7 @@ class TrialRecorder extends ChangeNotifier {
       dataPoints: draft.trial.dataPoints,
       source: draft.trial.source,
       sensors: draft.trial.sensors,
+      distanceMethod: draft.trial.distanceMethod,
       completion: TrialCompletion.recovered,
       interruptionReason:
           draft.trial.interruptionReason ??
@@ -412,6 +449,7 @@ class TrialRecorder extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _radarTracker = null;
     _cancelTimers();
     telemetry.removeListener(_telemetryChanged);
     _recentPoints.clear();

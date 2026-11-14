@@ -11,6 +11,8 @@ enum DataSource { hardware, simulation, unknown }
 
 enum TrialCompletion { completed, interrupted, recovered }
 
+enum DistanceMethod { integrated, wallRange }
+
 class Trial {
   Trial({
     String? id,
@@ -21,6 +23,7 @@ class Trial {
     this.completion = TrialCompletion.completed,
     this.interruptionReason,
     Iterable<SensorRole> sensors = SensorRole.values,
+    this.distanceMethod = DistanceMethod.integrated,
   }) : id = (id ?? const Uuid().v4()).toLowerCase(),
        dataPoints = List.unmodifiable(dataPoints),
        sensors = Set.unmodifiable(sensors);
@@ -32,6 +35,7 @@ class Trial {
   final DataSource source;
   final TrialCompletion completion;
   final String? interruptionReason;
+  final DistanceMethod distanceMethod;
 
   /// Frozen at Start. Missing metadata in historical files means all three.
   final Set<SensorRole> sensors;
@@ -54,6 +58,9 @@ class Trial {
         .map((point) => point.distanceFt)
         .whereType<double>();
     if (distances.isEmpty) return null;
+    if (distanceMethod == DistanceMethod.wallRange) {
+      return max(0, distances.last);
+    }
     return max(0, distances.last - distances.first);
   }
 
@@ -88,6 +95,13 @@ class Trial {
           )
           .toList(),
       sensors: sensors,
+      distanceMethod: json['distanceMethod'] == null
+          ? DistanceMethod.integrated
+          : DistanceMethod.values.firstWhere(
+              (method) => method.name == json['distanceMethod'],
+              orElse: () =>
+                  throw const FormatException('Unknown distance method.'),
+            ),
       source: DataSource.values.firstWhere(
         (value) => value.name == json['source'],
         orElse: () => DataSource.unknown,
@@ -123,6 +137,8 @@ class Trial {
     'dataPoints': dataPoints.map((point) => point.toJson()).toList(),
     'source': source.name,
     'completion': completion.name,
+    if (distanceMethod != DistanceMethod.integrated)
+      'distanceMethod': distanceMethod.name,
     'sensors': SensorRole.values
         .where(sensors.contains)
         .map((role) => role.name)

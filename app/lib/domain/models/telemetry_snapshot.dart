@@ -1,3 +1,4 @@
+import 'radar_frame.dart';
 import 'sensor_status.dart';
 import 'trial.dart';
 
@@ -11,6 +12,7 @@ class TelemetrySnapshot {
     this.leftReady = false,
     this.rightReady = false,
     this.radarReady = false,
+    this.radarFrame,
   });
 
   final DataSource source;
@@ -21,12 +23,17 @@ class TelemetrySnapshot {
   final bool leftReady;
   final bool rightReady;
   final bool radarReady;
+  final RadarFrame? radarFrame;
 
   bool isReady(SensorRole role) => switch (role) {
     SensorRole.leftFoot => leftReady && weightLeft?.isFinite == true,
     SensorRole.rightFoot => rightReady && weightRight?.isFinite == true,
     SensorRole.radar =>
-      radarReady && distanceFt?.isFinite == true && speedFtS?.isFinite == true,
+      radarReady &&
+          speedFtS?.isFinite == true &&
+          (source == DataSource.simulation
+              ? distanceFt?.isFinite == true
+              : radarFrame?.nearest != null),
   };
   Set<SensorRole> get readySensors =>
       Set.unmodifiable(SensorRole.values.where(isReady));
@@ -56,6 +63,7 @@ class TelemetrySnapshot {
       leftReady: left,
       rightReady: right,
       radarReady: radar,
+      radarFrame: radar ? radarFrame : null,
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'battery_status.dart';
+import 'radar_frame.dart';
 
 enum SensorRole {
   leftFoot('SW-LeftFoot', 'Left foot'),
@@ -47,6 +48,7 @@ class SensorStatus {
   int? waitingSinceMilliseconds;
   double? value;
   double? speed;
+  RadarFrame? radarFrame;
 
   void clear() {
     battery.reset();
@@ -58,5 +60,6 @@ class SensorStatus {
     waitingSinceMilliseconds = null;
     value = null;
     speed = null;
+    radarFrame = null;
   }
 }
