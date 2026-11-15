@@ -1,3 +1,7 @@
+# Radar parsing based on AWR1843-Read-Data-Python by Ibai Gorordo (MIT License).
+# Original: https://github.com/ibaiGorordo/AWR1843-Read-Data-Python-MMWAVE-SDK-3-
+# Modified for Smart Walker: UART-to-BLE relay; measurement logic is in Flutter.
+
 import serial
 import time
 import secrets
@@ -191,79 +195,97 @@ def radarReaderThread(Dataport, stopEvent):
     session = secrets.randbits(32)
     while not stopEvent.is_set():
         try:
-            incoming = Dataport.read(min(max(Dataport.in_waiting, 1), 32768))
+            incoming = Dataport.read(min(Dataport.in_waiting, MAX_PACKET_BYTES))
             frames = parser.feed(incoming)
-            if not frames:
-                continue
-            # Keep the newest complete UART frame, not a queue of stale targets.
-            number, cycles, points = frames[-1]
-            if previousNumber is not None:
-                advance = (number - previousNumber) & 0xffffffff
-                if advance == 0:
-                    continue
-                if advance >= 0x80000000:
-                    session = secrets.randbits(32)  # Explicit radar restart.
-            previousNumber = number
-            acquired_ms = time.monotonic_ns() // 1000000
-            with frameLock:
-                latestFrame = (session, number, cycles, acquired_ms, points)
-                frameCount += len(frames)
+            if frames:
+                number, cycles, points = frames[-1]
+                advance = None if previousNumber is None else (number - previousNumber) & 0xffffffff
+                if advance != 0:
+                    if advance is not None and advance >= 0x80000000:
+                        session = secrets.randbits(32)
+                    previousNumber = number
+                    acquired_ms = time.monotonic_ns() // 1000000
+                    with frameLock:
+                        latestFrame = (session, number, cycles, acquired_ms, points)
+                        frameCount += len(frames)
         except Exception as e:
-            print(f"[Radar] Read/parse error: {e}")
-            stopEvent.wait(0.03)
+            print(f"[Radar] Parse error: {e}")
+        time.sleep(0.03)  # Preserve the pre-v2 reader cadence.
 
 
+# Async main — same server lifecycle as before detection-frame v2.
 async def main():
+    # 1. Configure radar serial ports and send config.
     print("[Radar] Configuring serial ports...")
     CLIport, Dataport = serialConfig(configFileName)
-    print(f"[BLE] Starting detection-frame v2 server as '{BLE_DEVICE_NAME}'...")
+
+    # 2. Start BLE GATT server with the original name/UUIDs/properties.
+    print(f"[BLE] Starting server as '{BLE_DEVICE_NAME}'...")
     server = BlessServer(name=BLE_DEVICE_NAME)
     await server.add_new_service(BLE_SERVICE_UUID)
+    char_flags = (GATTCharacteristicProperties.read |
+                  GATTCharacteristicProperties.notify)
+    permissions = GATTAttributePermissions.readable
     await server.add_new_characteristic(
-        BLE_SERVICE_UUID, BLE_CHAR_UUID,
-        GATTCharacteristicProperties.read | GATTCharacteristicProperties.notify,
-        None, GATTAttributePermissions.readable,
+        BLE_SERVICE_UUID, BLE_CHAR_UUID, char_flags, None, permissions,
     )
     await server.start()
+    print(f"[BLE] Advertising — Service: {BLE_SERVICE_UUID}")
+
+    # 3. Original background-reader structure; processing now stays in the app.
     stopEvent = threading.Event()
-    reader = threading.Thread(target=radarReaderThread,
-                              args=(Dataport, stopEvent), daemon=True)
+    reader = threading.Thread(
+        target=radarReaderThread, args=(Dataport, stopEvent), daemon=True,
+    )
     reader.start()
-    lastSent = None
+    print("[Radar] Reader thread started — listening for data...")
+
+    # 4. Publish periodically as before. Repeats preserve acquisition identity:
+    # they keep the relay active, never turn old readings into fresh measurements.
     sequence = 0
-    lastPrint = time.monotonic()
+    lastPrint = time.time()
     try:
         while True:
-            started = time.monotonic()
             with frameLock:
                 frame = latestFrame
                 count = frameCount
-            # No periodic resend: an old UART value must never refresh app freshness.
             if frame is not None:
                 session, number, cycles, acquired_ms, points = frame
-                identity = (session, number, acquired_ms)
-                age_ms = time.monotonic_ns() // 1000000 - acquired_ms
-                if identity != lastSent and age_ms <= 500:
-                    body = encode_ble_frame(session, number, cycles, acquired_ms, points)
+            # Do not introduce a long-dead UART value as a new client's baseline.
+            if frame is not None and time.monotonic_ns() // 1000000 - acquired_ms <= 500:
+                body = encode_ble_frame(session, number, cycles, acquired_ms, points)
+                # Advance even after a failed transmission so partial frames cannot mix.
+                sequence = (sequence + 1) & 0xffff
+                try:
                     for chunk in ble_chunks(body, sequence):
                         server.get_characteristic(BLE_CHAR_UUID).value = bytearray(chunk)
-                        server.update_value(BLE_SERVICE_UUID, BLE_CHAR_UUID)
-                        # Yield so the backend publishes each <=20-byte value in order.
+                        updated = server.update_value(BLE_SERVICE_UUID, BLE_CHAR_UUID)
+                        if updated is False:
+                            raise RuntimeError("BLE backend rejected characteristic update")
+                        # Framing is the necessary difference from the old single text
+                        # notification. This yields to the backend, not a delivery ACK.
                         await asyncio.sleep(0.002)
-                    lastSent = identity
-                    sequence = (sequence + 1) & 0xffff
-                if started - lastPrint >= 1:
-                    lastPrint = started
+                except Exception as e:
+                    # A send failure must not stop the radar or unregister the server.
+                    print(f"[BLE] Publish failed; retrying next cycle: {e}")
+
+            now = time.time()
+            if now - lastPrint >= 1.0:
+                lastPrint = now
+                if frame is None:
+                    print(f"[Radar] Frames: {count} | Waiting for UART data | BLE v2")
+                else:
+                    age_ms = time.monotonic_ns() // 1000000 - acquired_ms
                     print(f"[Radar] Frames: {count} | Frame: {number} | "
                           f"Detections: {len(points)} | Age: {age_ms} ms | BLE v2")
-            await asyncio.sleep(max(0, BLE_NOTIFY_INTERVAL - (time.monotonic() - started)))
+            await asyncio.sleep(BLE_NOTIFY_INTERVAL)
     except KeyboardInterrupt:
-        print("[Main] Shutting down...")
+        print("\n[Main] Shutting down...")
     finally:
         stopEvent.set()
         reader.join(timeout=2)
         await server.stop()
-        CLIport.write(b'sensorStop\n')
+        CLIport.write(('sensorStop\n').encode())
         CLIport.close()
         Dataport.close()
         print("[Main] Clean shutdown complete")

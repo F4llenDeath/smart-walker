@@ -35,13 +35,35 @@ class TelemetryController extends ChangeNotifier {
       source: DataSource.hardware,
       weightLeft: left.phase == SensorPhase.ready ? left.value : null,
       weightRight: right.phase == SensorPhase.ready ? right.value : null,
-      radarFrame: radar.phase == SensorPhase.ready ? radar.radarFrame : null,
+      radarFrame: radar.connected ? radar.radarFrame : null,
+      radarConnected: radar.connected,
+      radarSourceEpoch: radar.radarSourceEpoch,
+      radarStreamFresh:
+          radar.connected &&
+          radar.radarFrame != null &&
+          (radar.phase == SensorPhase.ready ||
+              radar.phase == SensorPhase.waiting),
       speedFtS: radar.phase == SensorPhase.ready ? radar.speed : null,
       leftReady: left.phase == SensorPhase.ready,
       rightReady: right.phase == SensorPhase.ready,
       radarReady: radar.phase == SensorPhase.ready,
     );
   }
+
+  /// Held display value only. Never use this for recording or freshness checks.
+  double? get displaySpeedFtS {
+    if (switching || !foreground) return null;
+    if (simulating) return simulator.snapshot.speedFtS;
+    final radar = devices.sensors[SensorRole.radar]!;
+    return radar.connected ? radar.speed : null;
+  }
+
+  bool get radarSpeedPaused =>
+      !simulating &&
+      !switching &&
+      foreground &&
+      devices.sensors[SensorRole.radar]!.connected &&
+      !snapshot.isReady(SensorRole.radar);
 
   Future<void> setSimulation(bool enabled) async {
     if (sourceLocked() || switching || enabled == simulating) return;

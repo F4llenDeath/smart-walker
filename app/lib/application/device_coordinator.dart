@@ -62,6 +62,9 @@ class DeviceCoordinator extends ChangeNotifier {
       _active && !_disposed && hasPermissions && adapter == AdapterState.on;
   bool get allReady =>
       sensors.values.every((status) => status.phase == SensorPhase.ready);
+  bool get allConnected => sensors.values.every((status) => status.connected);
+  int get connectedCount =>
+      sensors.values.where((status) => status.connected).length;
   int get readyCount => sensors.values
       .where((status) => status.phase == SensorPhase.ready)
       .length;
@@ -206,6 +209,7 @@ class DeviceCoordinator extends ChangeNotifier {
       ];
       await transport.connect(device.id);
       if (!current()) return;
+      status.connected = true;
       status.phase = SensorPhase.discovering;
       notifyListeners();
       final capabilities = await transport.discover(device.id);
@@ -223,7 +227,7 @@ class DeviceCoordinator extends ChangeNotifier {
                     radarDecoder.reset();
                     status.radarFrame = null;
                     status.value = null;
-                    status.speed = null;
+                    // Keep the last display value, but never treat it as fresh.
                     status.error = 'Update the Pi radar script: detection-frame protocol v2 is required.';
                     status.phase = SensorPhase.waiting;
                     notifyListeners();
@@ -235,16 +239,21 @@ class DeviceCoordinator extends ChangeNotifier {
                       _clock.elapsedMilliseconds,
                     );
                     if (frame == null) return;
+                    if (status.radarFrame != null &&
+                        status.radarFrame!.session != frame.session) {
+                      status.radarSourceEpoch++;
+                    }
                     status.radarFrame = frame;
                     status.value =
                         null; // Raw ranges are not travelled distance.
                     final target = frame.nearest;
-                    status.speed = target == null
-                        ? null
-                        : target.radialVelocity.abs() *
-                              target.rangeMeters /
-                              target.y *
-                              3.28084;
+                    if (target != null) {
+                      status.speed =
+                          target.radialVelocity.abs() *
+                          target.rangeMeters /
+                          target.y *
+                          3.28084;
+                    }
                     status.lastReceived = DateTime.now().toUtc();
                     status.lastReceiptMilliseconds = _clock.elapsedMilliseconds;
                     status.phase = target == null
@@ -257,9 +266,15 @@ class DeviceCoordinator extends ChangeNotifier {
                         : null;
                     if (target != null) _attempts[role] = 0;
                     notifyListeners();
-                    if (allReady) unawaited(_stopScan());
+                    if (allConnected) unawaited(_stopScan());
                   } on FormatException catch (exception) {
-                    unawaited(_failed(role, generation, exception.message));
+                    // Measurement discontinuity, not a Bluetooth failure.
+                    radarDecoder.reset();
+                    status.radarSourceEpoch++;
+                    status.radarFrame = null;
+                    status.phase = SensorPhase.waiting;
+                    status.error = exception.message;
+                    notifyListeners();
                   }
                   return;
                 }
@@ -273,11 +288,17 @@ class DeviceCoordinator extends ChangeNotifier {
                 status.error = null;
                 _attempts[role] = 0;
                 notifyListeners();
-                if (allReady) unawaited(_stopScan());
+                if (allConnected) unawaited(_stopScan());
               },
               onError: (Object exception) {
                 if (current()) {
-                  unawaited(_failed(role, generation, '$exception'));
+                  if (role == SensorRole.radar) {
+                    status.phase = SensorPhase.stale;
+                    status.error = 'Radar notifications paused: $exception';
+                    notifyListeners();
+                  } else {
+                    unawaited(_failed(role, generation, '$exception'));
+                  }
                 }
               },
             ),
@@ -432,14 +453,20 @@ class DeviceCoordinator extends ChangeNotifier {
       final freshness = status.role == SensorRole.radar
           ? 1000
           : BleProtocol.freshness.inMilliseconds;
-      if (status.phase == SensorPhase.ready &&
+      if ((status.phase == SensorPhase.ready ||
+              status.role == SensorRole.radar &&
+                  status.phase == SensorPhase.waiting) &&
           receipt != null &&
           _clock.elapsedMilliseconds - receipt > freshness) {
         status.phase = SensorPhase.stale;
+        if (status.role == SensorRole.radar) {
+          status.error = 'Radar measurements paused — no new frames.';
+        }
         changed = true;
       }
       final wait = receipt ?? status.waitingSinceMilliseconds;
-      if ((status.phase == SensorPhase.waiting ||
+      if (status.role != SensorRole.radar &&
+          (status.phase == SensorPhase.waiting ||
               status.phase == SensorPhase.stale) &&
           wait != null &&
           _clock.elapsedMilliseconds - wait > 12000) {
@@ -464,7 +491,7 @@ class DeviceCoordinator extends ChangeNotifier {
   Future<void> _setScanning(bool wanted) {
     final result = _scanTransition.then((_) async {
       final shouldScan =
-          wanted && _canConnect && !allReady && _connectWork == null;
+          wanted && _canConnect && !allConnected && _connectWork == null;
       if (shouldScan == scanning) return;
       if (!shouldScan) {
         try {
@@ -480,7 +507,7 @@ class DeviceCoordinator extends ChangeNotifier {
           scanning = true;
           if (!_canConnect ||
               epoch != _epoch ||
-              allReady ||
+              allConnected ||
               _connectWork != null) {
             try {
               await transport.stopScan();
@@ -553,6 +580,7 @@ class DeviceCoordinator extends ChangeNotifier {
     _scanRetry?.cancel();
     for (final status in sensors.values) {
       status.phase = SensorPhase.disconnected;
+      status.connected = false;
       status.battery.reset(BatteryAvailability.unavailable);
     }
     notifyListeners();

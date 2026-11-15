@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import '../../app/app_dependencies.dart';
 import '../../application/trial_recorder.dart';
 import '../../core/formatters.dart';
+import '../../domain/models/sensor_status.dart';
 import '../../shared/widgets/panels.dart';
 import '../patients/patient_picker.dart';
 import '../trials/trial_detail_page.dart';
@@ -233,6 +234,9 @@ class LiveSessionContent extends StatelessWidget {
                   final snapshot = recorder.recording
                       ? recorder.recordingSnapshot
                       : telemetry.snapshot;
+                  final hasRadar =
+                      !recorder.recording ||
+                      recorder.sensors.contains(SensorRole.radar);
                   return FTileGroup.merge(
                     semanticsLabel: 'Live measurements',
                     physics: const NeverScrollableScrollPhysics(),
@@ -267,14 +271,18 @@ class LiveSessionContent extends StatelessWidget {
                           if (recorder.recording)
                             _metricTile(
                               context,
-                              'Trial distance',
+                              recorder.radarDistancePauseReason != null
+                                  ? 'Trial distance · paused'
+                                  : 'Trial distance',
                               recorder.trialDistance,
                               'ft',
                             ),
                           _metricTile(
                             context,
-                            'Speed',
-                            snapshot.speedFtS,
+                            hasRadar && telemetry.radarSpeedPaused
+                                ? 'Speed · paused'
+                                : 'Speed',
+                            hasRadar ? telemetry.displaySpeedFtS : null,
                             'ft/s',
                           ),
                         ],
@@ -286,6 +294,8 @@ class LiveSessionContent extends StatelessWidget {
               if (recorder.recording) ...[
                 const SizedBox(height: 12),
                 Text('Recording sensors: ${recorder.sensorLabel}'),
+                if (recorder.radarDistancePauseReason != null)
+                  Text(recorder.radarDistancePauseReason!),
                 const SizedBox(height: 20),
                 LiveTrialCharts(recorder: recorder),
               ],

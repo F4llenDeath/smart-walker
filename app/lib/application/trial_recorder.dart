@@ -48,6 +48,7 @@ class TrialRecorder extends ChangeNotifier {
   double baseline = 0;
   double _lastAbsolute = 0;
   RadarDistanceTracker? _radarTracker;
+  int _radarSourceEpoch = 0;
   DataSource _source = DataSource.unknown;
   Set<SensorRole> _sensors = const {};
   Trial? _completed;
@@ -77,23 +78,35 @@ class TrialRecorder extends ChangeNotifier {
       source: snapshot.source,
       weightLeft: snapshot.weightLeft,
       weightRight: snapshot.weightRight,
-      distanceFt: trialDistance,
+      distanceFt: snapshot.source == DataSource.hardware
+          ? (snapshot.radarStreamFresh ? _radarTracker?.distanceFt : null)
+          : trialDistance,
       speedFtS: snapshot.speedFtS,
       leftReady: snapshot.leftReady,
       rightReady: snapshot.rightReady,
       radarReady: snapshot.radarReady,
       radarFrame: snapshot.radarFrame,
+      radarConnected: snapshot.radarConnected,
+      radarStreamFresh: snapshot.radarStreamFresh,
+      radarSourceEpoch: snapshot.radarSourceEpoch,
     );
   }
 
   double? get trialDistance {
     if (!recording || !_sensors.contains(SensorRole.radar)) return null;
     final snapshot = telemetry.snapshot;
-    if (!snapshot.isReady(SensorRole.radar)) return null;
-    return _source == DataSource.simulation
+    if (_source == DataSource.hardware) {
+      return snapshot.radarConnected ? _radarTracker?.displayDistanceFt : null;
+    }
+    return snapshot.isReady(SensorRole.radar)
         ? max(0, snapshot.distanceFt! - baseline)
-        : _radarTracker?.distanceFt;
+        : null;
   }
+
+  String? get radarDistancePauseReason =>
+      recording && _sensors.contains(SensorRole.radar)
+      ? _radarTracker?.pauseReason
+      : null;
 
   String? get startUnavailable {
     if (!patients.ready) {
@@ -146,6 +159,7 @@ class TrialRecorder extends ChangeNotifier {
     _sensors = snapshot.readySensors;
     _start = DateTime.now().toUtc();
     _radarTracker = null;
+    _radarSourceEpoch = snapshot.radarSourceEpoch;
     if (_sensors.contains(SensorRole.radar) && _source == DataSource.hardware) {
       final frame = snapshot.radarFrame!;
       _radarTracker = RadarDistanceTracker(frame, frame.nearest!);
@@ -227,6 +241,8 @@ class TrialRecorder extends ChangeNotifier {
         _source == DataSource.hardware && _sensors.contains(SensorRole.radar)
         ? DistanceMethod.wallRange
         : DistanceMethod.integrated,
+    radarGaps:
+        _source == DataSource.hardware && _sensors.contains(SensorRole.radar),
     completion: completion,
     interruptionReason: reason,
   );
@@ -244,13 +260,24 @@ class TrialRecorder extends ChangeNotifier {
     if (telemetry.switching || snapshot.source != _source) {
       return 'The telemetry source changed.';
     }
-    if (!snapshot.readyFor(_sensors)) {
-      return 'A participating sensor disconnected or its telemetry became stale.';
+    for (final role in _sensors) {
+      if (role == SensorRole.radar && _source == DataSource.hardware) {
+        if (!snapshot.radarConnected) {
+          return 'The participating radar disconnected.';
+        }
+      } else if (!snapshot.isReady(role)) {
+        return 'A participating sensor disconnected or its telemetry became stale.';
+      }
     }
     if (_sensors.contains(SensorRole.radar)) {
       if (_source == DataSource.hardware) {
-        _radarTracker!.update(snapshot.radarFrame!);
-        if (_radarTracker!.failure != null) return _radarTracker!.failure;
+        if (snapshot.radarSourceEpoch != _radarSourceEpoch) {
+          _radarTracker!.sourceRestarted();
+        } else if (snapshot.radarStreamFresh && snapshot.radarFrame != null) {
+          _radarTracker!.update(snapshot.radarFrame!);
+        } else {
+          _radarTracker!.pause('Radar measurements stale; distance paused.');
+        }
       } else if (snapshot.distanceFt! < _lastAbsolute - 0.005) {
         return 'Simulated cumulative distance reset or regressed.';
       }
@@ -261,6 +288,7 @@ class TrialRecorder extends ChangeNotifier {
   void _telemetryChanged() {
     if (!recording && !_starting) return;
     final snapshot = telemetry.snapshot;
+    final previousPause = _radarTracker?.pauseReason;
     final reason = _telemetryProblem(snapshot);
     if (reason != null) {
       if (_starting) {
@@ -271,6 +299,9 @@ class TrialRecorder extends ChangeNotifier {
     } else if (_sensors.contains(SensorRole.radar) &&
         _source == DataSource.simulation) {
       _lastAbsolute = snapshot.distanceFt!;
+    }
+    if (recording && previousPause != _radarTracker?.pauseReason) {
+      notifyListeners();
     }
   }
 
@@ -284,6 +315,13 @@ class TrialRecorder extends ChangeNotifier {
       weightRight: snapshot.weightRight,
       distanceFt: snapshot.distanceFt,
       speedFtS: snapshot.speedFtS,
+      radarUnavailable:
+          _source == DataSource.hardware && _sensors.contains(SensorRole.radar)
+          ? [
+              if (snapshot.distanceFt == null) RadarMeasurement.distanceFt,
+              if (snapshot.speedFtS == null) RadarMeasurement.speedFtS,
+            ]
+          : const [],
     );
     _points.add(point);
     _recentPoints.addLast(point);
@@ -408,6 +446,7 @@ class TrialRecorder extends ChangeNotifier {
       source: draft.trial.source,
       sensors: draft.trial.sensors,
       distanceMethod: draft.trial.distanceMethod,
+      radarGaps: draft.trial.radarGaps,
       completion: TrialCompletion.recovered,
       interruptionReason:
           draft.trial.interruptionReason ??

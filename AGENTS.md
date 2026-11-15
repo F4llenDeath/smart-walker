@@ -196,6 +196,9 @@ controller/
   there is no separate helper module. Keep USB serial/configuration on the Pi.
   Target selection, speed geometry, filtering, trial lock, and distance calculations
   belong in shared Flutter services, not the Pi, widgets, or platform-specific hosts.
+  Its serial setup, Bless lifecycle, 30 ms reader cadence, and 200 ms publishing
+  structure follow the version before `dd854bf`; only validated detection parsing,
+  frame identity, chunking, and recoverable publish-error handling are added.
 - The radar script reads `AWR1843config.cfg` relative to its working directory;
   run it from `controller/` on the configured hardware. Serial paths and baud
   rates are hardware-specific. Starting it sends configuration commands to the
@@ -300,10 +303,13 @@ retry. macOS sharing remains unchanged; Windows uses native Save As.
   CSV, and historical charts retain the complete recording.
 - Live Y-axis limits expand when needed without shrinking on every sample.
   Update charts at the sampling cadence, independently of the faster elapsed clock.
-- Participating sensor disconnect/staleness, Bluetooth loss, backgrounding, radar
-  source restart, or loss of the trial's locked target stops recording and saves an
-  interrupted trial. Nonparticipating sensor changes do not stop a trial. Never
-  continue with a missing participating stream or fabricate replacement values.
+- Actual participating-device disconnect, participating foot staleness, Bluetooth
+  loss, or backgrounding stops recording and saves an interrupted trial.
+  Hardware radar target loss, stale/invalid radar frames, or source restart instead
+  pause the affected radar measurement without stopping the clock/foot recording
+  or tearing down BLE. Nonparticipating sensor changes do not stop a trial.
+  Held numbers are display-only and labeled paused; unavailable radar values are
+  stored as explicit gaps, never copied as fresh samples or replaced with zeros.
   Recheck the frozen set during the initial asynchronous recovery save; a transient
   loss during startup must not be hidden by a quick reconnection. An intentionally
   limited-sensor trial stopped normally has `completed` status, not `interrupted`.
@@ -344,9 +350,14 @@ Characteristic: B8F9E1C2-4D65-5EA3-A04F-1B2C3D4E5F60
   rebuild the app. No separate Python helper file is required. Old apps
   cannot read this stream; old Pi `distance,speed` packets are explicitly rejected
   with update guidance. Existing saved trials are not rewritten.
-- The Pi forwards all detections from the newest complete UART frame at nominal
-  **200 ms** intervals, once per frame, with no cached-value heartbeat. Frames
-  older than **500 ms** at send start are skipped. Unknown TLVs are skipped by
+- The Pi publishes the latest complete detection frame every nominal **200 ms**,
+  as in the pre-v2 periodic publishing loop, with a **30 ms** reader sleep.
+  Repeats retain their original frame number/session/acquisition timestamp and
+  cannot refresh app measurement freshness. A new transport sequence is used on
+  every send attempt. Frames older than **500 ms** at send start are not published
+  (preventing a new client from acquiring a long-stale cached target); stopping
+  notifications does not disconnect the link. Publish failures are logged/retried
+  next cycle without stopping the radar or unregistering the server. Unknown TLVs are skipped by
   payload length; empty frames are valid. UART bounds/padding are consumed in full.
   No radar configuration, serial path/baud, or dependency upgrade is included.
 - Each BLE notification is at most **20 bytes**. Little-endian chunk header:
@@ -366,11 +377,16 @@ Characteristic: B8F9E1C2-4D65-5EA3-A04F-1B2C3D4E5F60
   check relative to the best observed Pi/app clock offset. Initial link latency
   cannot be inferred without synchronization. Only complete new frames refresh
   stream freshness; hardware radar becomes stale after **one second**. Valid
-  empty/overflow frames make radar unavailable immediately without pretending BLE
-  disconnected. Actual transmission rate depends on point count/link capacity.
+  empty/overflow frames make radar measurements unavailable without pretending BLE
+  disconnected. No target/telemetry timeout initiates radar disconnect/reconnect.
+  The connection button counts actual linked devices; readiness remains separate.
+  Actual transmission rate depends on point count/link capacity; the 2 ms chunk
+  yield is not an acknowledgment or a guaranteed delivery interval.
 - Live speed uses the nearest eligible forward point's absolute radial velocity,
   corrected by `range/y`; it is independent of the trial distance target and is
-  never held/extrapolated through missing detections. Eligibility initially uses
+  never recorded/extrapolated through missing detections. The last speed may stay
+  visible with a paused label; that display cache never validates a trial sample.
+  Eligibility initially uses
   forward `y >= 0.3 m`, range `<= 9.7 m`, azimuth/elevation within **±20°**.
 - Trial association chooses the point nearest the previous accepted range and
   lateral coordinates within a moving gate: **0.15 m + 1.5 m/s × elapsed time**
@@ -378,11 +394,19 @@ Characteristic: B8F9E1C2-4D65-5EA3-A04F-1B2C3D4E5F60
   of up to **three** accepted ranges, not a running maximum. Gates, filtering,
   angle correction, and sparse-point identity assumptions are **provisional,
   not hardware-validated**. A different object within the gate can be ambiguous.
-- The conservative first implementation stops/saves on the first complete frame
-  with no acceptable trial target, or a gap over **one second**. Do not silently
-  relock, save replacement zero/held values, extrapolate from speed, or let live
-  speed validate a lost distance target. Small accepted range reversals are
-  allowed; cumulative-distance regression protection remains for simulation only.
+- Target loss pauses distance and holds its last displayed number. The original
+  baseline and last accepted reference survive gaps; the moving range gate is
+  capped to at most **one second** of plausible movement, never widened forever.
+  Resume only after **two** mutually consistent new candidate frames within the
+  old target gate. Sparse-point identity remains ambiguous. A radar source restart
+  keeps distance paused for the rest of that trial (speed may recover), rather
+  than silently relocking to an unrelated source. Start a new trial for a new lock.
+  Never save held readings/extrapolate from speed or let live speed validate a
+  lost distance target. Small accepted reversals are allowed; cumulative-distance
+  regression protection remains for simulation only. Foot samples, the clock,
+  checkpoints, and normal Stop continue during radar gaps, including radar-only
+  trials. A normal Stop remains `completed`; history explicitly identifies gaps
+  and a last-valid distance rather than claiming a measured endpoint.
   No app Start/Stop/reset commands are sent to the Pi. Validate stationary
   readings, measured approaches, pauses, intruders, target loss, and reconnects
   against a tape measure before relying on clinical distance accuracy.
@@ -425,7 +449,10 @@ Roles use advertised names; route packets by device ID and characteristic. Requi
 finite numeric values: malformed packets must not refresh freshness. Serialize
 connection setup, stop scanning before connecting, and enable notifications only
 after verifying the service and characteristic. Retry after **1, 2, 4, 8, then 16
-seconds**. Rebuild a subscription after **12 seconds** without valid telemetry.
+seconds**. Rebuild foot subscriptions after **12 seconds** without valid weight
+telemetry. Hardware radar frame/target absence, parse errors, and source restarts
+do not disconnect a healthy link. Actual connection events still drive reconnect;
+manual Retry remains available outside a locked trial.
 
 Android uses legacy advertising scans for the ESP32 modules. It declares Nearby
 Devices permissions on Android 12+ and legacy Bluetooth/fine-location permissions
@@ -445,7 +472,11 @@ Troubleshooting guidance:
   does not install drivers or bypass policy.
 - **Missing sensors:** check power/range and whether another phone/computer is
   connected. Retry rebuilds connections.
-- **Stale/disconnected mid-trial:** preserve the partial trial, never invent data.
+- **Radar target/frame gap:** keep BLE connected and the trial running, label held
+  displays as paused, and preserve explicit measurement gaps. Resume only when
+  valid measurements/association return.
+- **Actual disconnect or foot staleness mid-trial:** preserve the partial trial,
+  never invent data.
 
 ## Storage, identities, migration, and security
 
@@ -498,8 +529,18 @@ Compatibility is **historical Swift JSON -> Flutter**, not round-trip:
 - New trials store a nonempty `sensors` list of `leftFoot`, `rightFoot`, and/or
   `radar`, including in recovery checkpoints. Trials without this metadata are
   historical full-sensor trials and still require every numeric sample field.
-  Only fields for explicitly excluded sensors may be null/missing; malformed or
-  missing included measurements remain storage errors, not silent data repair.
+  Only fields for explicitly excluded sensors may be null/missing, except for
+  explicitly marked radar gaps described below. Missing included foot data or
+  unmarked missing radar fields remain storage errors, not silent data repair.
+- New hardware `wallRange` trials opt into `radarGaps: true`. During a gap,
+  samples include `radarUnavailable: [distanceFt, speedFtS]` (or only the affected
+  field) and explicit JSON `null` for each named field. Reject unknown/duplicate
+  fields, non-null marked fields, wrong trial/source types, and unmarked gaps.
+  Legacy/older trials remain strict. Recovery preserves the policy and markers.
+  CSV cells are blank and charts break at missing values; mean speed excludes
+  gaps. A gap at Stop makes summary distance the last valid displacement, not a
+  measured final position, and history warns about it. Old app builds cannot read
+  marked-gap trials; back up data before any downgrade.
 - Preserve mean speed/weight and historical/simulation last-minus-first distance
   calculations. New hardware-radar trials add `distanceMethod: wallRange` and
   their summary uses the last recorded baseline-relative displacement (do not

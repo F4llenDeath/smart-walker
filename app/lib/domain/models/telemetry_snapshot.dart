@@ -13,6 +13,9 @@ class TelemetrySnapshot {
     this.rightReady = false,
     this.radarReady = false,
     this.radarFrame,
+    this.radarConnected = false,
+    this.radarSourceEpoch = 0,
+    this.radarStreamFresh = false,
   });
 
   final DataSource source;
@@ -24,6 +27,9 @@ class TelemetrySnapshot {
   final bool rightReady;
   final bool radarReady;
   final RadarFrame? radarFrame;
+  final bool radarConnected;
+  final int radarSourceEpoch;
+  final bool radarStreamFresh;
 
   bool isReady(SensorRole role) => switch (role) {
     SensorRole.leftFoot => leftReady && weightLeft?.isFinite == true,
@@ -63,7 +69,10 @@ class TelemetrySnapshot {
       leftReady: left,
       rightReady: right,
       radarReady: radar,
-      radarFrame: radar ? radarFrame : null,
+      radarFrame: sensors.contains(SensorRole.radar) ? radarFrame : null,
+      radarConnected: sensors.contains(SensorRole.radar) && radarConnected,
+      radarSourceEpoch: radarSourceEpoch,
+      radarStreamFresh: sensors.contains(SensorRole.radar) && radarStreamFresh,
     );
   }
 }

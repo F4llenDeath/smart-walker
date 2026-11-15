@@ -33,7 +33,9 @@ class _ConnectionStatusButtonState extends State<ConnectionStatusButton> {
         prefix: const Icon(FLucideIcons.bluetooth),
         onPress: onPress,
         child: Text(
-          telemetry.simulating ? 'SIM' : '${telemetry.snapshot.readyCount}/3',
+          telemetry.simulating
+              ? 'SIM'
+              : '${widget.dependencies.devices.connectedCount}/3 linked',
         ),
       );
     },

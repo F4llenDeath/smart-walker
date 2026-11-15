@@ -24,26 +24,54 @@ class RadarDistanceTracker {
   RadarFrame _lastFrame;
   double _filteredRange;
   final List<double> _ranges;
+  RadarFrame? _pending;
+  RadarFrame? _lastSeen;
+  String? pauseReason;
   String? failure;
 
-  double? get distanceFt => failure == null
-      ? max(0, initialRangeMeters - _filteredRange) * metersToFeet
-      : null;
+  bool get available => pauseReason == null && failure == null;
+  double get displayDistanceFt =>
+      max(0, initialRangeMeters - _filteredRange) * metersToFeet;
+  double? get distanceFt => available ? displayDistanceFt : null;
+
+  void pause(String reason) {
+    pauseReason = failure ?? reason;
+    _pending = null;
+  }
+
+  void sourceRestarted() {
+    failure =
+        'Radar source restarted; distance remains paused until the next trial.';
+    pause(failure!);
+  }
 
   void update(RadarFrame frame) {
     if (failure != null) return;
     if (frame.session != session) {
-      failure = 'Radar source restarted during the trial.';
+      sourceRestarted();
       return;
     }
-    if (frame.number == _lastFrame.number) return;
+    if (frame.number == _lastSeen?.number ||
+        frame.number == _lastFrame.number) {
+      return;
+    }
+    _lastSeen = frame;
     final delta = frame.acquiredMilliseconds - _lastFrame.acquiredMilliseconds;
-    if (delta <= 0 || delta > maximumGapMilliseconds || frame.overflow) {
-      failure = 'Radar target frame timing/data became unavailable.';
+    if (delta <= 0) {
+      sourceRestarted();
       return;
     }
+    if (frame.overflow) {
+      pause('Radar point overflow; distance paused.');
+      return;
+    }
+    if (delta > maximumGapMilliseconds && pauseReason == null) {
+      pause('Radar frame gap; waiting for a consistent target.');
+    }
+    // Cap the gate even after a long outage; never absorb a distant stranger.
     final rangeGate =
-        rangeNoiseMeters + maximumSpeedMetersPerSecond * delta / 1000;
+        rangeNoiseMeters +
+        maximumSpeedMetersPerSecond * min(delta, maximumGapMilliseconds) / 1000;
     final lateralGate = 0.3 + 0.2 * _previous.rangeMeters;
     RadarPoint? selected;
     var best = double.infinity;
@@ -61,9 +89,39 @@ class RadarDistanceTracker {
       }
     }
     if (selected == null) {
-      // Never relock to the nearest stranger, hold a fake sample, or extrapolate.
-      failure = 'The trial radar target was lost or jumped outside its tracking window.';
+      pause('Trial target unavailable; distance paused.');
       return;
+    }
+    if (pauseReason != null) {
+      final pending = _pending;
+      if (pending == null) {
+        _pending = RadarFrame(
+          session: frame.session,
+          number: frame.number,
+          cpuCycles: frame.cpuCycles,
+          acquiredMilliseconds: frame.acquiredMilliseconds,
+          receivedMilliseconds: frame.receivedMilliseconds,
+          points: [selected],
+        );
+        return;
+      }
+      final step = frame.acquiredMilliseconds - pending.acquiredMilliseconds;
+      final candidate = pending.points.single;
+      if (step <= 0 ||
+          step > maximumGapMilliseconds ||
+          (selected.rangeMeters - candidate.rangeMeters).abs() >
+              rangeNoiseMeters + maximumSpeedMetersPerSecond * step / 1000 ||
+          sqrt(
+                pow(selected.x - candidate.x, 2) +
+                    pow(selected.z - candidate.z, 2),
+              ) >
+              lateralGate) {
+        pause('Waiting for two consistent target frames.');
+        return;
+      }
+      _pending = null;
+      pauseReason = null;
+      _ranges.clear();
     }
     _previous = selected;
     _lastFrame = frame;

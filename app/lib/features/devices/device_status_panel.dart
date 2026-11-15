@@ -197,7 +197,9 @@ class _DeviceStatusPanelState extends State<DeviceStatusPanel> {
           };
     final readiness = ready
         ? (simulated ? 'Ready, simulated' : 'Ready')
-        : 'Not ready';
+        : widget.dependencies.devices.sensors[role]!.connected
+        ? 'Connected — measurements paused'
+        : 'Not connected';
     return FTile.raw(
       child: Semantics(
         container: true,
@@ -211,6 +213,13 @@ class _DeviceStatusPanelState extends State<DeviceStatusPanel> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(role.label),
+                  Text(
+                    readiness,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: context.theme.colors.mutedForeground,
+                    ),
+                  ),
                   if (role == SensorRole.radar &&
                       !simulated &&
                       widget.dependencies.devices.sensors[role]!.error != null)
@@ -269,12 +278,18 @@ class _DeviceStatusPanelState extends State<DeviceStatusPanel> {
               const SizedBox(width: 4),
             ],
             Icon(
-              ready ? FLucideIcons.check : FLucideIcons.x,
+              ready
+                  ? FLucideIcons.check
+                  : widget.dependencies.devices.sensors[role]!.connected
+                  ? FLucideIcons.pause
+                  : FLucideIcons.x,
               size: 20,
               color: ready
                   ? (context.theme.colors.brightness == Brightness.dark
                         ? Colors.green.shade400
                         : Colors.green.shade700)
+                  : widget.dependencies.devices.sensors[role]!.connected
+                  ? context.theme.colors.mutedForeground
                   : context.theme.colors.destructive,
             ),
           ],

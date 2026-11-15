@@ -41,6 +41,7 @@ class SensorStatus {
   final SensorRole role;
   final BatteryStatus battery = BatteryStatus();
   SensorPhase phase = SensorPhase.disconnected;
+  bool connected = false;
   String? deviceId;
   String? error;
   DateTime? lastReceived;
@@ -49,10 +50,12 @@ class SensorStatus {
   double? value;
   double? speed;
   RadarFrame? radarFrame;
+  int radarSourceEpoch = 0;
 
   void clear() {
     battery.reset();
     phase = SensorPhase.disconnected;
+    connected = false;
     deviceId = null;
     error = null;
     lastReceived = null;
@@ -61,5 +64,6 @@ class SensorStatus {
     value = null;
     speed = null;
     radarFrame = null;
+    radarSourceEpoch = 0;
   }
 }

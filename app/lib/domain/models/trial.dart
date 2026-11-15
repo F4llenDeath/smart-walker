@@ -24,6 +24,7 @@ class Trial {
     this.interruptionReason,
     Iterable<SensorRole> sensors = SensorRole.values,
     this.distanceMethod = DistanceMethod.integrated,
+    this.radarGaps = false,
   }) : id = (id ?? const Uuid().v4()).toLowerCase(),
        dataPoints = List.unmodifiable(dataPoints),
        sensors = Set.unmodifiable(sensors);
@@ -36,6 +37,12 @@ class Trial {
   final TrialCompletion completion;
   final String? interruptionReason;
   final DistanceMethod distanceMethod;
+  final bool radarGaps;
+  int get radarGapSamples =>
+      dataPoints.where((point) => point.radarUnavailable.isNotEmpty).length;
+  bool get distancePausedAtEnd =>
+      dataPoints.isNotEmpty &&
+      dataPoints.last.radarUnavailable.contains(RadarMeasurement.distanceFt);
 
   /// Frozen at Start. Missing metadata in historical files means all three.
   final Set<SensorRole> sensors;
@@ -85,27 +92,44 @@ class Trial {
 
   factory Trial.fromJson(Map<String, dynamic> json) {
     final sensors = _readSensors(json);
+    final source = DataSource.values.firstWhere(
+      (value) => value.name == json['source'],
+      orElse: () => DataSource.unknown,
+    );
+    final method = json['distanceMethod'] == null
+        ? DistanceMethod.integrated
+        : DistanceMethod.values.firstWhere(
+            (value) => value.name == json['distanceMethod'],
+            orElse: () =>
+                throw const FormatException('Unknown distance method.'),
+          );
+    if (json.containsKey('radarGaps') && json['radarGaps'] is! bool) {
+      throw const FormatException('Invalid radar gap policy.');
+    }
+    final gaps = json['radarGaps'] == true;
+    if (gaps &&
+        (source != DataSource.hardware ||
+            method != DistanceMethod.wallRange ||
+            !sensors.contains(SensorRole.radar))) {
+      throw const FormatException('Radar gaps require a hardware range trial.');
+    }
     return Trial(
       id: jsonString(json, 'id'),
       startDate: jsonDate(json, 'startDate'),
       endDate: json['endDate'] == null ? null : jsonDate(json, 'endDate'),
       dataPoints: jsonList(json, 'dataPoints')
           .map(
-            (value) => DataPoint.fromJson(jsonObject(value), sensors: sensors),
+            (value) => DataPoint.fromJson(
+              jsonObject(value),
+              sensors: sensors,
+              allowRadarGaps: gaps,
+            ),
           )
           .toList(),
       sensors: sensors,
-      distanceMethod: json['distanceMethod'] == null
-          ? DistanceMethod.integrated
-          : DistanceMethod.values.firstWhere(
-              (method) => method.name == json['distanceMethod'],
-              orElse: () =>
-                  throw const FormatException('Unknown distance method.'),
-            ),
-      source: DataSource.values.firstWhere(
-        (value) => value.name == json['source'],
-        orElse: () => DataSource.unknown,
-      ),
+      distanceMethod: method,
+      source: source,
+      radarGaps: gaps,
       completion: TrialCompletion.values.firstWhere(
         (value) => value.name == json['completion'],
         orElse: () => json['endDate'] == null
@@ -137,6 +161,7 @@ class Trial {
     'dataPoints': dataPoints.map((point) => point.toJson()).toList(),
     'source': source.name,
     'completion': completion.name,
+    if (radarGaps) 'radarGaps': true,
     if (distanceMethod != DistanceMethod.integrated)
       'distanceMethod': distanceMethod.name,
     'sensors': SensorRole.values

@@ -153,6 +153,16 @@ class _TrialDetailPageState extends State<TrialDetailPage> {
                   'Distance: displacement toward the trial target (not path length).',
                 ),
               const SizedBox(height: 16),
+              if (trial.radarGapSamples > 0) ...[
+                NoticeBanner(
+                  'Radar measurement gaps',
+                  message:
+                      '${trial.radarGapSamples} samples have unavailable radar measurements. '
+                      'Charts and CSV preserve gaps; speed averages exclude them. '
+                      '${trial.distancePausedAtEnd ? 'Distance is the last valid displacement, not a measured endpoint.' : ''}',
+                ),
+                const SizedBox(height: 16),
+              ],
               if (trial.interruptionReason != null) ...[
                 NoticeBanner(
                   'Partial recording',
@@ -181,7 +191,9 @@ class _TrialDetailPageState extends State<TrialDetailPage> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     DetailRow(
-                      'Total distance',
+                      trial.distancePausedAtEnd
+                          ? 'Last valid distance'
+                          : 'Total distance',
                       '${measurement(trial.totalDistance)} ft',
                     ),
                     DetailRow(
