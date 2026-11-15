@@ -1,8 +1,3 @@
-# Radar parsing code based on AWR1843-Read-Data-Python by Ibai Gorordo
-# Original: https://github.com/ibaiGorordo/AWR1843-Read-Data-Python-MMWAVE-SDK-3-
-# Licensed under MIT License
-# Modified for Smart Walker: replaced plotting with BLE server output
-
 import serial
 import time
 import secrets

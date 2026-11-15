@@ -13,7 +13,7 @@ class RadarPoint {
   /// Matches the controlled forward-wall setup, not arbitrary environments.
   bool get eligible =>
       y >= 0.3 &&
-      rangeMeters <= 9.7 &&
+      rangeMeters <= 20.0 &&
       atan2(x.abs(), y) <= 20 * pi / 180 &&
       atan2(z.abs(), sqrt(x * x + y * y)) <= 20 * pi / 180;
 }
