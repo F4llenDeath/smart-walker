@@ -6,7 +6,7 @@ A mobile/desktop app + embedded hardware project for the Spring 2026 UW Madison 
 
 ### Live BLE Telemetry
 - Live left, right, and total weight (lbs) and speed (ft/s); distance (ft) is
-  trial-only range displacement toward the target, independent of speed.
+  trial-only range displacement toward the target.
 - Automatic discovery and reconnection for the three BLE sensor modules.
 - Separate linked-device and sensor-readiness indicators, with retry controls.
 
@@ -15,14 +15,6 @@ A mobile/desktop app + embedded hardware project for the Spring 2026 UW Madison 
 - Samples captured at a nominal 200 ms interval.
 - Live walking-speed and left/right weight charts showing the latest 30 seconds;
   the saved trial retains the complete recording.
-- Radar target/data loss pauses the displayed measurement while the trial clock
-  and foot recording continue; paused readings are saved as gaps, not fresh data.
-  Tracking can resume from the original baseline after consistent detections.
-- Trials stop and preserve partial data on actual participating-device disconnect,
-  participating foot failure, or backgrounding. Recording is foreground-only.
-- The Pi keeps its pre-v2 serial/Bless lifecycle and periodic publishing structure,
-  with only the parsing/framing changes needed to relay detections. Deploy just
-  `swRadar.py` and `AWR1843config.cfg`; all measurement logic remains in Flutter.
 
 ### Patient Management
 - Add and select patients, or record under the default Unassigned patient.

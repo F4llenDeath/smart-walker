@@ -49,6 +49,10 @@ class SensorStatus {
   int? waitingSinceMilliseconds;
   double? value;
   double? speed;
+
+  /// Valid speed from the current fresh radar frame, not the trial target lock.
+  /// [speed] may remain cached for display after this becomes false.
+  bool radarSpeedAvailable = false;
   RadarFrame? radarFrame;
   int radarSourceEpoch = 0;
 
@@ -63,6 +67,7 @@ class SensorStatus {
     waitingSinceMilliseconds = null;
     value = null;
     speed = null;
+    radarSpeedAvailable = false;
     radarFrame = null;
     radarSourceEpoch = 0;
   }

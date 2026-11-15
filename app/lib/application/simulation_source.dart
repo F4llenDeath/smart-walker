@@ -33,6 +33,7 @@ class SimulationSource extends ChangeNotifier {
       leftReady: true,
       rightReady: true,
       radarReady: true,
+      radarSpeedAvailable: true,
     );
     notifyListeners();
   }

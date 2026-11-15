@@ -85,6 +85,7 @@ class TrialRecorder extends ChangeNotifier {
       leftReady: snapshot.leftReady,
       rightReady: snapshot.rightReady,
       radarReady: snapshot.radarReady,
+      radarSpeedAvailable: snapshot.hasRadarSpeed,
       radarFrame: snapshot.radarFrame,
       radarConnected: snapshot.radarConnected,
       radarStreamFresh: snapshot.radarStreamFresh,

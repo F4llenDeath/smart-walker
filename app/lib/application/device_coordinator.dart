@@ -226,6 +226,7 @@ class DeviceCoordinator extends ChangeNotifier {
                   if (bytes.isNotEmpty && bytes.first != 0x53) {
                     radarDecoder.reset();
                     status.radarFrame = null;
+                    status.radarSpeedAvailable = false;
                     status.value = null;
                     // Keep the last display value, but never treat it as fresh.
                     status.error = 'Update the Pi radar script: detection-frame protocol v2 is required.';
@@ -247,6 +248,9 @@ class DeviceCoordinator extends ChangeNotifier {
                     status.value =
                         null; // Raw ranges are not travelled distance.
                     final target = frame.nearest;
+                    // Speed takes the current eligible target immediately, even
+                    // when a trial's separate distance tracker rejects that point.
+                    status.radarSpeedAvailable = target != null;
                     if (target != null) {
                       status.speed =
                           target.radialVelocity.abs() *
@@ -272,6 +276,7 @@ class DeviceCoordinator extends ChangeNotifier {
                     radarDecoder.reset();
                     status.radarSourceEpoch++;
                     status.radarFrame = null;
+                    status.radarSpeedAvailable = false;
                     status.phase = SensorPhase.waiting;
                     status.error = exception.message;
                     notifyListeners();
@@ -293,6 +298,7 @@ class DeviceCoordinator extends ChangeNotifier {
               onError: (Object exception) {
                 if (current()) {
                   if (role == SensorRole.radar) {
+                    status.radarSpeedAvailable = false;
                     status.phase = SensorPhase.stale;
                     status.error = 'Radar notifications paused: $exception';
                     notifyListeners();
@@ -460,6 +466,7 @@ class DeviceCoordinator extends ChangeNotifier {
           _clock.elapsedMilliseconds - receipt > freshness) {
         status.phase = SensorPhase.stale;
         if (status.role == SensorRole.radar) {
+          status.radarSpeedAvailable = false;
           status.error = 'Radar measurements paused — no new frames.';
         }
         changed = true;
@@ -581,6 +588,7 @@ class DeviceCoordinator extends ChangeNotifier {
     for (final status in sensors.values) {
       status.phase = SensorPhase.disconnected;
       status.connected = false;
+      status.radarSpeedAvailable = false;
       status.battery.reset(BatteryAvailability.unavailable);
     }
     notifyListeners();

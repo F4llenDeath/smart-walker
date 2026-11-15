@@ -386,6 +386,13 @@ Characteristic: B8F9E1C2-4D65-5EA3-A04F-1B2C3D4E5F60
   corrected by `range/y`; it is independent of the trial distance target and is
   never recorded/extrapolated through missing detections. The last speed may stay
   visible with a paused label; that display cache never validates a trial sample.
+  Speed has its own explicit availability flag, separate from general sensor
+  readiness and the distance lock. In idle and recording views, any fresh eligible
+  speed point updates immediately, including a different point after distance
+  target loss, during two-frame distance reacquisition, and after a source restart.
+  Distance-only gaps mark only `distanceFt` unavailable: speed samples, charts,
+  CSV cells, and averages continue. Speed pauses only when its own eligible
+  measurement is missing, invalid, or stale, never because distance is paused.
   Eligibility initially uses
   forward `y >= 0.3 m`, range `<= 9.7 m`, azimuth/elevation within **±20°**.
 - Trial association chooses the point nearest the previous accepted range and

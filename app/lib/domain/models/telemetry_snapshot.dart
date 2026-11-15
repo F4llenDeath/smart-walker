@@ -16,6 +16,7 @@ class TelemetrySnapshot {
     this.radarConnected = false,
     this.radarSourceEpoch = 0,
     this.radarStreamFresh = false,
+    this.radarSpeedAvailable = false,
   });
 
   final DataSource source;
@@ -31,12 +32,17 @@ class TelemetrySnapshot {
   final int radarSourceEpoch;
   final bool radarStreamFresh;
 
+  /// Independent of distance availability, its locked target, and recovery.
+  final bool radarSpeedAvailable;
+
+  bool get hasRadarSpeed => radarSpeedAvailable && speedFtS?.isFinite == true;
+
   bool isReady(SensorRole role) => switch (role) {
     SensorRole.leftFoot => leftReady && weightLeft?.isFinite == true,
     SensorRole.rightFoot => rightReady && weightRight?.isFinite == true,
     SensorRole.radar =>
       radarReady &&
-          speedFtS?.isFinite == true &&
+          hasRadarSpeed &&
           (source == DataSource.simulation
               ? distanceFt?.isFinite == true
               : radarFrame?.nearest != null),
@@ -65,7 +71,9 @@ class TelemetrySnapshot {
       weightLeft: left ? weightLeft : null,
       weightRight: right ? weightRight : null,
       distanceFt: radar ? distanceFt : null,
-      speedFtS: radar ? speedFtS : null,
+      speedFtS: sensors.contains(SensorRole.radar) && hasRadarSpeed
+          ? speedFtS
+          : null,
       leftReady: left,
       rightReady: right,
       radarReady: radar,
@@ -73,6 +81,7 @@ class TelemetrySnapshot {
       radarConnected: sensors.contains(SensorRole.radar) && radarConnected,
       radarSourceEpoch: radarSourceEpoch,
       radarStreamFresh: sensors.contains(SensorRole.radar) && radarStreamFresh,
+      radarSpeedAvailable: sensors.contains(SensorRole.radar) && hasRadarSpeed,
     );
   }
 }

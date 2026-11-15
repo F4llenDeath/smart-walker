@@ -43,7 +43,10 @@ class TelemetryController extends ChangeNotifier {
           radar.radarFrame != null &&
           (radar.phase == SensorPhase.ready ||
               radar.phase == SensorPhase.waiting),
-      speedFtS: radar.phase == SensorPhase.ready ? radar.speed : null,
+      speedFtS: radar.connected && radar.radarSpeedAvailable
+          ? radar.speed
+          : null,
+      radarSpeedAvailable: radar.connected && radar.radarSpeedAvailable,
       leftReady: left.phase == SensorPhase.ready,
       rightReady: right.phase == SensorPhase.ready,
       radarReady: radar.phase == SensorPhase.ready,
@@ -63,7 +66,7 @@ class TelemetryController extends ChangeNotifier {
       !switching &&
       foreground &&
       devices.sensors[SensorRole.radar]!.connected &&
-      !snapshot.isReady(SensorRole.radar);
+      !snapshot.hasRadarSpeed;
 
   Future<void> setSimulation(bool enabled) async {
     if (sourceLocked() || switching || enabled == simulating) return;
